@@ -56,7 +56,7 @@ try {
         if ((Get-FileHash -LiteralPath (Join-Path $taskCodexDirectory $taskName)).Hash -ne $taskConfigHashes[$taskName]) { throw 'Unexpected Codex configuration change during update' }
     }
     $taskReport = @{ok=$true;version=$taskVersion;updatedFiles=$taskChanges.Count;installDirectory=$InstallDirectory;registered=$taskStatus.data.registered;codexConfigurationUnchanged=$true;backup=$taskBackup;codexRestartRequired=$true}
-    $taskReport | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $taskRoot 'artifacts\evidence\v012-installed-update.json') -Encoding utf8
+    $taskReport | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $taskRoot "artifacts\evidence\$taskVersion-installed-update.json") -Encoding utf8
     $taskReport | ConvertTo-Json -Depth 4
 } catch {
     foreach ($taskChange in $taskApplied) {

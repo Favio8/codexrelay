@@ -205,6 +205,21 @@ class ControlTests(unittest.TestCase):
         self.assertTrue(result["registered"])
         self.assertNotIn("conflict", result)
 
+    def test_same_runtime_with_windows_namespace_after_config_reformat(self):
+        directory = self.base / "codex"
+        directory.mkdir()
+        integration.install(self.store, str(directory))
+        config = directory / "config.toml"
+        config.write_text(config.read_text(encoding="utf-8").replace("# Managed by CodexRelay\n", ""), encoding="utf-8")
+        self.store.set_setting("integration_registration:" + str(directory.resolve()), None)
+        executable = str(Path(sys.executable).resolve())
+        if not executable.startswith("\\\\?\\"):
+            executable = "\\\\?\\" + executable
+        with patch("codexrelay.integration.sys.executable", executable):
+            result = integration.preview(self.store, str(directory))
+        self.assertTrue(result["registered"])
+        self.assertNotIn("conflict", result)
+
     def test_previous_release_is_recognized_from_protected_backup(self):
         directory = self.base / "codex"
         directory.mkdir()

@@ -5,13 +5,13 @@
 
 **Let Codex delegate to DeepSeek. Manage external agents with a switch.**
 
-[![Release](https://img.shields.io/github/v/release/Favio8/codexrelay?include_prereleases)](https://github.com/Favio8/codexrelay/releases/tag/v0.1.2)
+[![Release](https://img.shields.io/github/v/release/Favio8/codexrelay?include_prereleases)](https://github.com/Favio8/codexrelay/releases/tag/v0.1.3)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-[简体中文](README.md) · English · [Download](https://github.com/Favio8/codexrelay/releases/tag/v0.1.2)
+[简体中文](README.md) · English · [Download](https://github.com/Favio8/codexrelay/releases/tag/v0.1.3)
 </div>
 
-A Windows desktop manager for Codex external agents. Codex plans and reviews; DeepSeek or an OpenAI-compatible provider executes suitable independent tasks through MCP. Provider management and desktop workflow are inspired by [CC Switch](https://github.com/farion1231/cc-switch).
+A Windows desktop manager for Codex external agents. Codex plans and reviews; DeepSeek or an OpenAI-compatible provider executes suitable independent tasks through MCP.
 
 ![Provider management](docs/provider-row-preview.png)
 
@@ -19,7 +19,7 @@ A Windows desktop manager for Codex external agents. Codex plans and reviews; De
 
 ## Download
 
-[Windows x64 installer — v0.1.2 Beta](https://github.com/Favio8/codexrelay/releases/download/v0.1.2/CodexRelay_0.1.2_x64-setup.exe) · [Release notes and checksums](https://github.com/Favio8/codexrelay/releases/tag/v0.1.2)
+[Windows x64 installer — v0.1.3 Beta](https://github.com/Favio8/codexrelay/releases/download/v0.1.3/CodexRelay_0.1.3_x64-setup.exe) · [Release notes and checksums](https://github.com/Favio8/codexrelay/releases/tag/v0.1.3)
 
 Verified on Windows 11 x64. Requires an existing Codex installation. Python is bundled; end users do not need developer tools. The installer downloads WebView2 if missing. This beta is unsigned and has no automatic updater.
 
@@ -30,6 +30,8 @@ Verified on Windows 11 x64. Requires an existing Codex installation. Python is b
 3. Restart Codex Desktop, call the MCP `ping` tool in a new session to verify the workspace, then enable delegation.
 
 The same MCP registration can be used by Codex CLI. Codex chooses when to delegate; its main model and login remain under Codex's control.
+
+Registration is a one-time setup. Afterwards, open Codex directly: the saved switch state persists, and Codex starts the execution engine itself. CodexRelay only needs to be open when changing settings or viewing tasks. Closing the window or quitting its tray application does not disable delegation or terminate Codex's MCP tasks. Closing Codex or its execution engine can interrupt work; review partial changes after restarting.
 
 ## Features
 

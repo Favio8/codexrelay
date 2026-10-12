@@ -20,6 +20,10 @@ CI installs the Python packages on Windows and builds the frontend separately. C
 
 ## Native UI
 
+The 0.1.3 registration regression passes 31 unit tests. tests/registration-lifecycle.mjs exercises actual Tauri RPC with normal and Windows namespace paths, a re-formatted host configuration, desktop exit/restart, and automatic status refresh. Tests use isolated state and never change the everyday Codex registration.
+
+The native registration fixture passed. A separate live check completely exited the installed management application, confirmed its GUI process was absent, and then completed a new official DeepSeek read-only delegation through the existing Codex MCP. This verifies delegation remains available while the management application is closed; it does not establish the cause of an unrelated Codex chat stall.
+
 tests/native-compact-ui.mjs checks the actual Tauri/WebView2 application. Use an isolated CODEXRELAY_HOME, the fixtures required by the script, and the test-only WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS remote debugging port. Inspect the script before running: it is an integration fixture, not a test against your everyday application data.
 
 ## Optional real-provider checks

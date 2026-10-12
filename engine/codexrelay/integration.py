@@ -81,19 +81,28 @@ def decode(value):
     return value.decode("utf-8-sig")
 
 
+def same_executable(first, second):
+    # Tauri starts Python with a Windows \\?\ path. Compare the actual file,
+    # so normal, namespace and junction paths identify the same interpreter.
+    try:
+        return Path(first).samefile(second)
+    except OSError:
+        return Path(first).resolve() == Path(second).resolve()
+
+
 def owned(entry, store=None, directory=None):
     if not entry or list(entry.get("args", [])) != ["-I", "-X", "utf8", "-m", "codexrelay", "mcp"]:
         return False
     if any(key in entry for key in ("cwd", "env", "env_vars", "url")):
         return False
     command = Path(entry.get("command", "")).resolve()
-    if command == Path(sys.executable).resolve():
+    if same_executable(command, sys.executable):
         return True
     if store is None or directory is None:
         return False
     directory = str(Path(directory).resolve())
     recorded = store.setting("integration_registration:" + directory)
-    if recorded and Path(recorded.get("command", "")).resolve() == command and command.is_file():
+    if recorded and same_executable(recorded.get("command", ""), command) and command.is_file():
         return True
     # Older releases saved an encrypted ownership backup, but bound detection
     # to the current interpreter. Recognize that managed installation across

@@ -5,19 +5,19 @@
 
 **让 Codex 调用 DeepSeek，把子代理交给一个开关管理。**
 
-[![Release](https://img.shields.io/github/v/release/Favio8/codexrelay?include_prereleases&color=33795a)](https://github.com/Favio8/codexrelay/releases/tag/v0.1.2)
-[![Windows](https://img.shields.io/badge/Windows-x64-0078D4)](https://github.com/Favio8/codexrelay/releases/tag/v0.1.2)
+[![Release](https://img.shields.io/github/v/release/Favio8/codexrelay?include_prereleases&color=33795a)](https://github.com/Favio8/codexrelay/releases/tag/v0.1.3)
+[![Windows](https://img.shields.io/badge/Windows-x64-0078D4)](https://github.com/Favio8/codexrelay/releases/tag/v0.1.3)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![CI](https://github.com/Favio8/codexrelay/actions/workflows/ci.yml/badge.svg)](https://github.com/Favio8/codexrelay/actions/workflows/ci.yml)
 
-简体中文 · [English](README_EN.md) · [下载安装](https://github.com/Favio8/codexrelay/releases/tag/v0.1.2) · [反馈问题](https://github.com/Favio8/codexrelay/issues)
+简体中文 · [English](README_EN.md) · [下载安装](https://github.com/Favio8/codexrelay/releases/tag/v0.1.3) · [反馈问题](https://github.com/Favio8/codexrelay/issues)
 </div>
 
 ## 为什么做 CodexRelay？
 
 Codex 负责规划、判断和验收；DeepSeek 或 OpenAI 兼容模型可以执行独立的读取、分析、编码和测试任务。CodexRelay 把供应商配置、接入、开关与任务状态放进一个 Windows 桌面应用，免去手工维护运行环境和 MCP 配置。
 
-使用体验参考 [CC Switch](https://github.com/farion1231/cc-switch)：安装、填入 Key、选择模型，然后开启。Codex 的主模型和登录继续由 Codex 管理。
+安装、填入 Key、选择模型，然后开启。Codex 的主模型和登录继续由 Codex 管理。
 
 ## 界面预览
 
@@ -27,9 +27,9 @@ Codex 负责规划、判断和验收；DeepSeek 或 OpenAI 兼容模型可以执
 
 ## 下载与安装
 
-**[下载 Windows x64 安装包（v0.1.2 Beta）](https://github.com/Favio8/codexrelay/releases/download/v0.1.2/CodexRelay_0.1.2_x64-setup.exe)**
+**[下载 Windows x64 安装包（v0.1.3 Beta）](https://github.com/Favio8/codexrelay/releases/download/v0.1.3/CodexRelay_0.1.3_x64-setup.exe)**
 
-[Release 说明与 SHA256 校验文件](https://github.com/Favio8/codexrelay/releases/tag/v0.1.2)
+[Release 说明与 SHA256 校验文件](https://github.com/Favio8/codexrelay/releases/tag/v0.1.3)
 
 - 当前优先支持 Windows；已在 Windows 11 x64 验证。界面为简体中文。
 - 需要已有 Codex Desktop；同一 MCP 接入可用于 Codex CLI。
@@ -44,6 +44,20 @@ Codex 负责规划、判断和验收；DeepSeek 或 OpenAI 兼容模型可以执
 3. **重启并开启。** 首次接入后重启 Codex Desktop，在新会话中让 Codex 调用 `codexrelay` 的 `ping`，确认工作区正确，再开启总开关。
 
 随后正常提出任务，Codex 根据任务是否适合决定委托。日常开关、供应商切换和项目禁用不需要重启 Codex。
+
+### 之后每次怎样用？
+
+**直接打开 Codex 即可。接入和开关状态会保存，不需要每次打开 CodexRelay，也不需要反复点击「接入 Codex」。** 想切换供应商、开启或关闭委托、查看任务时，再打开 CodexRelay。
+
+| 操作 | 子代理是否还能使用 |
+| --- | --- |
+| 关闭 CodexRelay 窗口，收起到托盘 | 可以，开关保持原状态 |
+| 从托盘退出 CodexRelay 管理程序 | 可以，Codex 独立管理执行引擎 |
+| 关闭总开关 | 新委托禁用，当前任务继续完成 |
+| 退出 Codex 或结束它的 MCP 引擎 | 当前执行可能中断；重开后检查部分修改 |
+| 重启电脑后打开 Codex | 自动读取已保存配置；无需重新接入 |
+
+「已接入」表示配置已经写入；是否实际能执行任务，可以在 Codex 中调用一次 MCP ping 检查。已配置却显示同名冲突时，应更新应用并运行检查，不要反复重新接入或删除其他配置。
 
 ## 主要功能
 
@@ -113,6 +127,6 @@ npm run desktop:dev
 
 ## 致谢与许可
 
-子代理执行引擎基于 [PsChina/deepseek-as-subagent](https://github.com/PsChina/deepseek-as-subagent)，固定上游提交与本地修改见 [UPSTREAM.md](vendor/deepseek-as-subagent/UPSTREAM.md)。桌面管理体验参考 CC Switch，本项目独立实现桌面应用。
+子代理执行引擎基于 [PsChina/deepseek-as-subagent](https://github.com/PsChina/deepseek-as-subagent)，固定上游提交与本地修改见 [UPSTREAM.md](vendor/deepseek-as-subagent/UPSTREAM.md)。
 
 CodexRelay 使用 [MIT License](LICENSE)。上游及依赖保留各自许可证，参见 [第三方说明](THIRD_PARTY_NOTICES.md)。
