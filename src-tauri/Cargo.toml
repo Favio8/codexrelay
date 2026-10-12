@@ -1,0 +1,13 @@
+[package]
+name = "codexrelay"
+version = "0.1.2"
+description = "Codex external agent control center"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-dialog = "2"
+serde_json = "1"

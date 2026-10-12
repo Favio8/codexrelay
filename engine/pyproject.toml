@@ -1,0 +1,13 @@
+[project]
+name = "codexrelay"
+version = "0.1.2"
+description = "Local control plane for Codex external subagents"
+requires-python = ">=3.12,<3.13"
+dependencies = ["mcp>=1.28,<2", "openai>=1.40,<3", "tomlkit>=0.13,<1"]
+
+[build-system]
+requires = ["hatchling>=1.25,<2"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["codexrelay"]
