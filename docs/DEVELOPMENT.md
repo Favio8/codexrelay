@@ -27,6 +27,8 @@ For a portable MSVC toolchain, pass `-Toolchain 'D:\path\to\msvc'`. The script s
 
 The NSIS installer is produced under src-tauri/target/release/bundle/nsis/. The build generates release license notices from the locked npm/Cargo dependencies and copies project licenses into the bundled runtime.
 
+Since 0.2.2, NSIS uses `src-tauri/installer.nsi`, pinned to the CLI 2.12.2 upstream template, plus `hooks.nsh` and `scripts/installer-maintenance.ps1` for in-place upgrades. After changing those files or bundled Python, repackage with `npm run tauri -- bundle --bundles nsis`. `scripts/update-installed.ps1` runs that same installer. Run the isolated installer fixtures before applying a maintenance update; template-only builds are insufficient to verify an upgrade with old processes alive.
+
 ## Layout
 
 | Directory | Responsibility |

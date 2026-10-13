@@ -44,13 +44,20 @@ def process_identity(pid):
 
 
 class Store:
+    SCHEMA_VERSION = 1
+
     def __init__(self, directory=None):
         self.directory = Path(directory) if directory else home()
         self.directory.mkdir(parents=True, exist_ok=True)
         self.path = self.directory / "relay.db"
         self._wal = True
         with self.connect() as db:
+            if db.execute('PRAGMA user_version').fetchone()[0] >= self.SCHEMA_VERSION:
+                return
+            # RPC starts a fresh process for each refresh. Initialize once, atomically,
+            # rather than acquiring schema/write locks on every read request.
             db.executescript("""
+                BEGIN IMMEDIATE;
                 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS providers (id TEXT PRIMARY KEY, payload TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS projects (path TEXT PRIMARY KEY, disabled INTEGER NOT NULL);
@@ -61,6 +68,7 @@ class Store:
                 CREATE INDEX IF NOT EXISTS usage_events_date ON usage_events(occurred_at);
                 INSERT OR IGNORE INTO settings VALUES ('enabled','false');
                 INSERT OR IGNORE INTO settings VALUES ('active_provider_id','null');
+                PRAGMA user_version=1;
             """)
 
     @contextlib.contextmanager
@@ -71,8 +79,10 @@ class Store:
             # Statistics scans run while delegation accepts, polls and settles tasks; WAL keeps
             # those readers from blocking the writers instead of serialising the whole GUI.
             if self._wal:
-                db.execute('PRAGMA journal_mode=WAL')
-                self._wal = db.execute('PRAGMA journal_mode').fetchone()[0].lower() == 'wal'
+                mode = db.execute('PRAGMA journal_mode').fetchone()[0].lower()
+                if mode != 'wal':
+                    mode = db.execute('PRAGMA journal_mode=WAL').fetchone()[0].lower()
+                self._wal = mode == 'wal'
                 if not self._wal:
                     db.execute('PRAGMA busy_timeout=10000')
             yield db
@@ -265,8 +275,13 @@ class Store:
 
     def snapshot(self):
         with self.connect() as db:
-            db.execute("BEGIN IMMEDIATE")
-            self._reap(db)
+            db.execute('BEGIN')
+            if db.execute('SELECT 1 FROM tasks WHERE active=1 LIMIT 1').fetchone():
+                # Reaping may write; end the read snapshot before taking the writer
+                # lock so it cannot fail with SQLITE_BUSY_SNAPSHOT on an upgrade.
+                db.rollback()
+                db.execute('BEGIN IMMEDIATE')
+                self._reap(db)
             result = {r[0]: json.loads(r[1]) for r in db.execute("SELECT key,value FROM settings")}
             result.pop('usage_prices', None)
             result['usage_source'] = str(self.directory.resolve())

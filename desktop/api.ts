@@ -1,9 +1,19 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
+export class RpcError extends Error {
+ constructor(message:string, public details='', public code='') {super(message);this.name='RpcError';}
+}
+const readMethods=new Set(['snapshot','integration_preview','backend_catalog','get_task','get_usage_prices','codex_usage_settings']);
 export async function rpc<T = any>(method: string, params: Record<string, unknown> = {}): Promise<T> {
  if (!isTauri()) throw new Error('请在 CodexRelay 桌面应用中使用此功能。浏览器仅用于界面预览。');
- const result = await invoke<{ok:boolean;data:T;error?:string}>('relay_request', {method, params});
- if (!result.ok) throw new Error(result.error || '操作未完成');
- return result.data;
+ for(let attempt=0;;attempt++) {
+  const result=await invoke<{ok:boolean;data:T;error?:string;details?:string;code?:string;retryable?:boolean}>('relay_request',{method,params});
+  if(result.ok)return result.data;
+  // Only retry busy reads. Applying settings, writes and model tests are never replayed.
+  if(result.code==='database_busy'&&result.retryable&&readMethods.has(method)&&attempt<2) {
+   await new Promise(resolve=>setTimeout(resolve,250*(attempt+1)));continue;
+  }
+  throw new RpcError(result.error||'操作未完成',result.details,result.code);
+ }
 }
 export interface Provider { id:string; revision?:string; name:string; kind:string; base_url:string; flash_model:string; pro_model:string; reasoning_effort:string; pro_reasoning_effort?:string; max_total_tokens?:number; max_output_tokens?:number; max_turns?:number; max_run_seconds?:number; has_key:boolean; }
 export interface Project { path:string; disabled:boolean; }

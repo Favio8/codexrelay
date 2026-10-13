@@ -25,7 +25,9 @@ async fn relay_request(app:tauri::AppHandle,method:String,params:Value)->Result<
 }
 fn show(app:&tauri::AppHandle){if let Some(w)=app.get_webview_window("main"){let _=w.show();let _=w.set_focus();}}
 fn main(){
- tauri::Builder::default().plugin(tauri_plugin_dialog::init()).invoke_handler(tauri::generate_handler![relay_request])
+ tauri::Builder::default()
+ .plugin(tauri_plugin_single_instance::init(|app,_,_|show(app)))
+ .plugin(tauri_plugin_dialog::init()).invoke_handler(tauri::generate_handler![relay_request])
  .setup(|app|{
   let open=MenuItem::with_id(app,"open","打开 CodexRelay",true,None::<&str>)?;
   let status=MenuItem::with_id(app,"status","正在读取委托状态…",false,None::<&str>)?;

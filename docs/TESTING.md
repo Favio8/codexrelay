@@ -1,5 +1,15 @@
 # Testing and verified scope
 
+## 0.2.2 upgrade and single instance
+
+The patch passed 127 unit tests. `node tests/installer-upgrade.mjs` exercises the actual NSIS installer with legacy GUI/MCP processes, a live-task refusal, retained state, unified shortcuts and duplicate GUI activation. `node tests/installer-locations.mjs` covers fresh installation and relocation of an old installation from the data folder. Fixtures use an isolated installation scope under `.tmp/`; they do not modify everyday registrations. Legacy executable/package snapshots for the first fixture are retained in `.tmp/upgrade-baseline/`. See [implementation, validation and template provenance](RELEASE-0.2.2.md).
+
+Exit the everyday management application from its tray before native GUI fixtures: the single-instance rule also applies to test copies. Codex-managed MCP engines can remain running.
+
+## 0.2.1 startup and compact settings
+
+The local 0.2.1 patch passed 119 unit tests. `test_startup.py` checks reads under an active database writer, legacy schema initialization without resetting settings, distinct SQLite busy/permission errors and private error details. `node tests/compact-settings-ui.mjs` uses the built frontend with actual Python RPC in isolated state; injected IPC failures check finite read retries, no settings/model-test replay, independent error recovery and dismissal, provider display and 900/800-width layouts. The updated native roadmap fixture also passed against the actual 0.2.1 Tauri/WebView2 and bundled Python/Pi, using a local model endpoint. See [patch scope and limits](RELEASE-0.2.1.md).
+
 The 0.1.2 beta was tested on Windows 11 x64 with the bundled Python 3.12 runtime. Unit validation passed 30 tests; native build and NSIS packaging passed.
 
 Local MCP fixtures cover delegation, workspace tools, switches, cancellation and recovery without paid-provider access. Native UI checks used an isolated application-data directory and demo providers; they verified 900 × 600 default size, the 800 × 520 minimum layout, provider rows and existing-registration behavior.

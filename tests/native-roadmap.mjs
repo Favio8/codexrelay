@@ -7,6 +7,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { chromium } from '@playwright/test';
 
 const root=process.cwd(),area=fs.mkdtempSync(path.join(root,'.tmp','roadmap-native-'));
+const version=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8')).version;
 const staging=path.join(area,'app');fs.mkdirSync(staging);
 fs.copyFileSync(path.join(root,'src-tauri/target/release/codexrelay.exe'),path.join(staging,'codexrelay.exe'));
 fs.symlinkSync(path.join(root,'runtime'),path.join(staging,'runtime'),'junction');
@@ -40,13 +41,13 @@ try{
  await page.getByText('管理服务已连接',{exact:true}).waitFor();
  await page.getByRole('button',{name:'设置与诊断',exact:true}).click();
  await page.getByRole('combobox',{name:'执行引擎',exact:true}).selectOption('pi');
- await page.getByRole('button',{name:'使用此执行组合',exact:true}).click();
- await page.getByText('执行组合已保存，新任务使用此组合。',{exact:true}).waitFor();
+ await page.getByRole('button',{name:'应用设置',exact:true}).click();
+ await page.getByText('设置已应用，新任务使用此组合。',{exact:true}).waitFor();
  assert.equal((await rpc('snapshot')).data.active_backend,'pi');
  assert.equal((await rpc('snapshot')).data.enabled,false);
- await page.getByRole('button',{name:'测试后端（消耗少量额度）',exact:true}).click();
- await page.locator('.alert.success,.alert.error').filter({hasText:/后端已完成|失败|操作|runtime|workspace/}).first().waitFor({timeout:45000});
- assert((await page.locator('body').innerText()).includes('后端已完成真实模型与文件工具测试。'),await page.locator('body').innerText());
+ await page.getByRole('button',{name:'测试连接',exact:true}).click();
+ await page.locator('.alert.success,.alert.error').filter({hasText:/连接测试通过|失败|操作|runtime|workspace/}).first().waitFor({timeout:45000});
+ assert((await page.locator('body').innerText()).includes('连接测试通过。'),await page.locator('body').innerText());
  assert.equal(requests,2);
  assert.equal((await rpc('codex_usage_settings')).data.enabled,false);
  await page.getByRole('button',{name:'开启本机日志统计',exact:true}).click();
@@ -69,9 +70,9 @@ try{
  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
  await page.getByRole('heading',{name:'执行后端',exact:true}).scrollIntoViewIfNeeded();
  const output=path.join(root,'artifacts','evidence');fs.mkdirSync(output,{recursive:true});
- await page.screenshot({path:path.join(output,'0.2.0-native-settings.png')});
+ await page.screenshot({path:path.join(output,version+'-native-settings.png')});
  const result={ok:true,target:'actual Tauri/WebView2 and bundled Python/Pi',requests,checks:['atomic backend/provider activation preserves disabled switch','Pi real local model+Read loop from GUI','opt-in Codex log import from old session directory','per-model cached-input prices','no message body in DB or DOM','stop scanning and clear cache without deleting logs','managed-rule upgrade preserves user rules','900x600 layout'],fixture:area};
- fs.writeFileSync(path.join(output,'0.2.0-native.json'),JSON.stringify(result,null,2));console.log(JSON.stringify(result,null,2));
+ fs.writeFileSync(path.join(output,version+'-native.json'),JSON.stringify(result,null,2));console.log(JSON.stringify(result,null,2));
 }catch(error){
  if(page)console.error('Native failure state:',await page.locator('body').innerText());
  throw error;
