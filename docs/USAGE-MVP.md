@@ -1,6 +1,6 @@
 # 委托用量 MVP 实施记录
 
-日期：2026-10-13（Asia/Shanghai）。本页记录 U1 初次交付。后续 U2 和多后端现已纳入 0.2.0，详见 [完整交付记录](ROADMAP-0.2.0.md)。本机安装已升级，最终收尾与验证见 [0.2.0 交付记录](RELEASE-0.2.0.md)。GitHub 安装包 Release 尚未发布。
+日期：2026-10-13（Asia/Shanghai）。本页记录 U1 初次交付。后续 U2 和多后端现已纳入 0.2.0，详见 [完整交付记录](ROADMAP-0.2.0.md)。本机安装已升级，最终收尾与验证见 [0.2.0 交付记录](RELEASE-0.2.0.md)。安装包见 [GitHub v0.2.0 Windows Beta](https://github.com/Favio8/codexrelay/releases/tag/v0.2.0)。
 
 ## 用户可用功能
 

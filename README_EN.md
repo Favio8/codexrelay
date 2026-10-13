@@ -5,10 +5,10 @@
 
 **Let Codex delegate to DeepSeek. Manage external agents with a switch.**
 
-[![Release](https://img.shields.io/github/v/release/Favio8/codexrelay?include_prereleases)](https://github.com/Favio8/codexrelay/releases/tag/v0.1.3)
+[![Release](https://img.shields.io/github/v/release/Favio8/codexrelay?include_prereleases)](https://github.com/Favio8/codexrelay/releases/tag/v0.2.0)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-[简体中文](README.md) · English · [Download](https://github.com/Favio8/codexrelay/releases/tag/v0.1.3)
+[简体中文](README.md) · English · [Download](https://github.com/Favio8/codexrelay/releases/tag/v0.2.0)
 </div>
 
 A Windows desktop manager for Codex external agents. Codex plans and reviews; DeepSeek or an OpenAI-compatible provider executes suitable independent tasks through MCP.
@@ -19,11 +19,11 @@ A Windows desktop manager for Codex external agents. Codex plans and reviews; De
 
 ## Download
 
-[Windows x64 installer — v0.1.3 Beta](https://github.com/Favio8/codexrelay/releases/download/v0.1.3/CodexRelay_0.1.3_x64-setup.exe) · [Release notes and checksums](https://github.com/Favio8/codexrelay/releases/tag/v0.1.3)
+[Windows x64 installer — v0.2.0 Beta](https://github.com/Favio8/codexrelay/releases/download/v0.2.0/CodexRelay_0.2.0_x64-setup.exe) · [Release notes and checksums](https://github.com/Favio8/codexrelay/releases/tag/v0.2.0)
 
-The current source version is **0.2.0**, with delegation usage statistics, optional Codex log usage import, a Pi backend and recovery improvements. See the [0.2.0 delivery record](docs/RELEASE-0.2.0.md) for build and local upgrade verification. The download above still points to the published 0.1.3 beta.
+The current release is **0.2.0 Beta**, with delegation usage statistics, optional Codex log usage import, a Pi backend and recovery improvements. See the [0.2.0 delivery record](docs/RELEASE-0.2.0.md) for build and local upgrade verification.
 
-Verified on Windows 11 x64. Requires an existing Codex installation. Python is bundled; end users do not need developer tools. The installer downloads WebView2 if missing. This beta is unsigned and has no automatic updater.
+Verified on Windows 11 x64. Requires an existing Codex installation. Python and the Node runtime for Pi are bundled; end users do not need developer tools. The installer downloads WebView2 if missing. This beta is unsigned and has no automatic updater.
 
 ## Get started
 
@@ -54,7 +54,7 @@ The switch controls CodexRelay external agents only. It does not disable Codex's
 
 Tauri 2 / Rust / React / TypeScript / Python 3.12 / SQLite.
 
-See [development](docs/DEVELOPMENT.md), [architecture](docs/ARCHITECTURE.md), [testing](docs/TESTING.md) and [contributing](CONTRIBUTING.md). The local **0.2.0** build adds a Pi Agent SDK backend, delegated usage/cost estimates, response-level cache accounting and default-off Codex log statistics. See [delivery and acceptance scope](docs/ROADMAP-0.2.0.md). It has not been published to GitHub; the release links above still refer to the published beta. Automatic updates and concurrent agents remain outside this release.
+See [development](docs/DEVELOPMENT.md), [architecture](docs/ARCHITECTURE.md), [testing](docs/TESTING.md) and [contributing](CONTRIBUTING.md). The published **0.2.0 Beta** adds a Pi Agent SDK backend, delegated usage/cost estimates, response-level cache accounting and default-off Codex log statistics. See [delivery and acceptance scope](docs/ROADMAP-0.2.0.md). Automatic updates and concurrent agents remain outside this release.
 
 ## Credits and license
 

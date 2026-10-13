@@ -1,6 +1,6 @@
 # 0.2.0 交付与收尾
 
-日期：2026-10-13（Asia/Shanghai）。本机从 0.1.4 升级到 0.2.0，源码包含委托用量、可选 Codex 日志统计、Pi Agent SDK 后端及执行可靠性修复。功能范围和环境验收边界见 [ROADMAP-0.2.0.md](ROADMAP-0.2.0.md)。本次没有发布 GitHub 安装包 Release，README 下载链接继续指向已有版本。
+日期：2026-10-13（Asia/Shanghai）。本机从 0.1.4 升级到 0.2.0，源码包含委托用量、可选 Codex 日志统计、Pi Agent SDK 后端及执行可靠性修复。功能范围和环境验收边界见 [ROADMAP-0.2.0.md](ROADMAP-0.2.0.md)。[GitHub v0.2.0 Windows Beta](https://github.com/Favio8/codexrelay/releases/tag/v0.2.0) 提供安装包、SHA256SUMS.txt 及第三方许可声明，README 下载链接已同步。
 
 ## 最终复查修复
 

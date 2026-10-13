@@ -5,12 +5,12 @@
 
 **让 Codex 调用 DeepSeek，把子代理交给一个开关管理。**
 
-[![Release](https://img.shields.io/github/v/release/Favio8/codexrelay?include_prereleases&color=33795a)](https://github.com/Favio8/codexrelay/releases/tag/v0.1.3)
-[![Windows](https://img.shields.io/badge/Windows-x64-0078D4)](https://github.com/Favio8/codexrelay/releases/tag/v0.1.3)
+[![Release](https://img.shields.io/github/v/release/Favio8/codexrelay?include_prereleases&color=33795a)](https://github.com/Favio8/codexrelay/releases/tag/v0.2.0)
+[![Windows](https://img.shields.io/badge/Windows-x64-0078D4)](https://github.com/Favio8/codexrelay/releases/tag/v0.2.0)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![CI](https://github.com/Favio8/codexrelay/actions/workflows/ci.yml/badge.svg)](https://github.com/Favio8/codexrelay/actions/workflows/ci.yml)
 
-简体中文 · [English](README_EN.md) · [下载安装](https://github.com/Favio8/codexrelay/releases/tag/v0.1.3) · [反馈问题](https://github.com/Favio8/codexrelay/issues)
+简体中文 · [English](README_EN.md) · [下载安装](https://github.com/Favio8/codexrelay/releases/tag/v0.2.0) · [反馈问题](https://github.com/Favio8/codexrelay/issues)
 </div>
 
 ## 为什么做 CodexRelay？
@@ -27,15 +27,15 @@ Codex 负责规划、判断和验收；DeepSeek 或 OpenAI 兼容模型可以执
 
 ## 下载与安装
 
-**[下载 Windows x64 安装包（v0.1.3 Beta）](https://github.com/Favio8/codexrelay/releases/download/v0.1.3/CodexRelay_0.1.3_x64-setup.exe)**
+**[下载 Windows x64 安装包（v0.2.0 Beta）](https://github.com/Favio8/codexrelay/releases/download/v0.2.0/CodexRelay_0.2.0_x64-setup.exe)**
 
-[Release 说明与 SHA256 校验文件](https://github.com/Favio8/codexrelay/releases/tag/v0.1.3)
+[Release 说明与 SHA256 校验文件](https://github.com/Favio8/codexrelay/releases/tag/v0.2.0)
 
-当前源码版本为 **0.2.0**，新增委托用量统计、可选 Codex 日志用量对照、Pi 执行后端与恢复流程改进。构建与本机升级记录见 [0.2.0 交付记录](docs/RELEASE-0.2.0.md)。上方下载链接仍指向已发布的 0.1.3 Beta。
+当前发布版本为 **0.2.0 Beta**，新增委托用量统计、可选 Codex 日志用量对照、Pi 执行后端与恢复流程改进。构建与本机升级记录见 [0.2.0 交付记录](docs/RELEASE-0.2.0.md)。
 
 - 当前优先支持 Windows；已在 Windows 11 x64 验证。界面为简体中文。
 - 需要已有 Codex Desktop；同一 MCP 接入可用于 Codex CLI。
-- 安装包自带 Python 运行时，用户无需安装 Python、Git、Node.js 或 Rust。
+- 安装包自带 Python 与 Pi 所需的 Node 运行时，用户无需安装 Python、Git、Node.js 或 Rust。
 - 使用 Windows WebView2；系统缺少时，安装程序会联网安装。
 - 当前为未签名 Beta 安装包，自动更新尚未提供。
 
@@ -125,7 +125,7 @@ npm run desktop:dev
 
 [开发与构建](docs/DEVELOPMENT.md) · [架构](docs/ARCHITECTURE.md) · [测试与已验证范围](docs/TESTING.md) · [贡献指南](CONTRIBUTING.md)
 
-当前公开发布版的下载链接见上方。开发源码与本地 **0.2.0** 构建已包含 Pi Agent SDK 后端、委托用量/费用估算、逐响应缓存计量，以及默认关闭的 Codex 日志用量对照。详见 [0.2.0 功能与验收记录](docs/ROADMAP-0.2.0.md)。尚未发布到 GitHub；自动更新与多代理并发仍不包含在本版本。
+当前公开发布版 **0.2.0 Beta** 已包含 Pi Agent SDK 后端、委托用量/费用估算、逐响应缓存计量，以及默认关闭的 Codex 日志用量对照。详见 [0.2.0 功能与验收记录](docs/ROADMAP-0.2.0.md)。自动更新与多代理并发仍不包含在本版本。
 
 ## 致谢与许可
 
