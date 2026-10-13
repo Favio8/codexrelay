@@ -1,0 +1,10 @@
+{
+  "name": "codexrelay-pi-runtime",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "@earendil-works/pi-agent-core": "1.2.0",
+    "@earendil-works/pi-ai": "1.2.0"
+  }
+}

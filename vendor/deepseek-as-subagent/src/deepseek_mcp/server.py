@@ -458,7 +458,7 @@ def _record_usage(task_length: int, result: dict) -> bool:
                 f"{result['duration_seconds']:.1f}s  "
                 f"turns={result['turns_used']:>2}  "
                 f"tools={result['tool_calls']:>2}  "
-                f"tokens={result['tokens']['total']:>6}  "
+                f"tokens={str(result['tokens']['total']) if result['tokens']['total'] is not None else 'unknown':>6}  "
                 f"task_chars={task_length}\n"
             )
             return stream.write(record) == len(record)

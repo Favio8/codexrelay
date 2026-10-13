@@ -21,7 +21,21 @@ foreach ($taskModule in @('codexrelay','deepseek_mcp')) {
         }
     }
 }
+foreach ($taskSource in Get-ChildItem -LiteralPath (Join-Path $taskRoot 'runtime\pi') -File) {
+    $taskDestination = Join-Path $InstallDirectory ('runtime\pi\' + $taskSource.Name)
+    if (-not (Test-Path -LiteralPath $taskDestination) -or (Get-FileHash -LiteralPath $taskSource.FullName).Hash -ne (Get-FileHash -LiteralPath $taskDestination).Hash) {
+        $taskChanges.Add(@{Source=$taskSource.FullName;Destination=$taskDestination;Backup=(Join-Path $taskBackup ('pi\' + $taskSource.Name))})
+    }
+}
+foreach ($taskName in @('CODEXRELAY-LICENSE.txt','DEEPSEEK-LICENSE.txt','THIRD-PARTY-NOTICES.txt')) {
+    $taskSource = Join-Path $taskRoot "runtime\$taskName"
+    $taskDestination = Join-Path $InstallDirectory "runtime\$taskName"
+    if (-not (Test-Path -LiteralPath $taskDestination) -or (Get-FileHash -LiteralPath $taskSource).Hash -ne (Get-FileHash -LiteralPath $taskDestination).Hash) {
+        $taskChanges.Add(@{Source=$taskSource;Destination=$taskDestination;Backup=(Join-Path $taskBackup $taskName)})
+    }
+}
 foreach ($taskChange in $taskChanges) {
+    $taskChange.Existed = Test-Path -LiteralPath $taskChange.Destination
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $taskChange.Backup) | Out-Null
     if (Test-Path -LiteralPath $taskChange.Destination) { Copy-Item -LiteralPath $taskChange.Destination -Destination $taskChange.Backup }
 }
@@ -45,8 +59,8 @@ $taskApplied = [System.Collections.Generic.List[object]]::new()
 try {
     foreach ($taskChange in $taskChanges) {
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $taskChange.Destination) | Out-Null
-        Copy-Item -LiteralPath $taskChange.Source -Destination $taskChange.Destination -Force
         $taskApplied.Add($taskChange)
+        Copy-Item -LiteralPath $taskChange.Source -Destination $taskChange.Destination -Force
         if ((Get-FileHash -LiteralPath $taskChange.Source).Hash -ne (Get-FileHash -LiteralPath $taskChange.Destination).Hash) { throw 'Application update hash mismatch' }
     }
     Set-ItemProperty -LiteralPath $taskRegistry -Name DisplayVersion -Value $taskVersion
@@ -56,11 +70,18 @@ try {
         if ((Get-FileHash -LiteralPath (Join-Path $taskCodexDirectory $taskName)).Hash -ne $taskConfigHashes[$taskName]) { throw 'Unexpected Codex configuration change during update' }
     }
     $taskReport = @{ok=$true;version=$taskVersion;updatedFiles=$taskChanges.Count;installDirectory=$InstallDirectory;registered=$taskStatus.data.registered;codexConfigurationUnchanged=$true;backup=$taskBackup;codexRestartRequired=$true}
+    New-Item -ItemType Directory -Force -Path (Join-Path $taskRoot 'artifacts\evidence') | Out-Null
     $taskReport | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $taskRoot "artifacts\evidence\$taskVersion-installed-update.json") -Encoding utf8
     $taskReport | ConvertTo-Json -Depth 4
 } catch {
     foreach ($taskChange in $taskApplied) {
         if (Test-Path -LiteralPath $taskChange.Backup) { Copy-Item -LiteralPath $taskChange.Backup -Destination $taskChange.Destination -Force }
+        elseif (-not $taskChange.Existed) {
+            $taskResolved = [IO.Path]::GetFullPath($taskChange.Destination)
+            $taskInstallRoot = [IO.Path]::GetFullPath($InstallDirectory).TrimEnd('\') + '\'
+            if (-not $taskResolved.StartsWith($taskInstallRoot,[StringComparison]::OrdinalIgnoreCase)) { throw 'Rollback target is outside the selected installation' }
+            Remove-Item -LiteralPath $taskResolved -Force
+        }
     }
     Set-ItemProperty -LiteralPath $taskRegistry -Name DisplayVersion -Value $taskOldVersion
     throw

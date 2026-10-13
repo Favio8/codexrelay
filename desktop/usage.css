@@ -1,0 +1,23 @@
+.stat-grid.usage-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.usage-stat { display: block; text-align: left; min-width: 0; }
+.usage-stat strong { font-size: 22px; overflow-wrap: anywhere; }
+.usage-stat small { display: block; line-height: 1.8; }
+.usage-stat:disabled { opacity: 1; }
+.modal.usage-modal { width: 620px; }
+.usage-toolbar { display: flex; gap: 10px; margin-bottom: 18px; }
+.usage-summary { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 20px 0; }
+.usage-summary > div { border: 1px solid #dfe9e3; border-radius: 8px; padding: 16px; background: #f7faf8; min-width: 0; }
+.usage-summary span, .usage-summary small { display: block; font-size: 11px; color: #738078; }
+.usage-summary strong { display: block; margin: 12px 0; font-size: 20px; color: #2b483a; overflow-wrap: anywhere; }
+.usage-counts { grid-template-columns: 160px 1fr; margin: 16px 0; }
+.usage-note { color: #78887e; font-size: 11px; line-height: 1.9; margin: 12px 0 20px; }
+.usage-comparison { margin: 12px 0; font-size: 19px; color: #32674a; }
+.usage-tasks { margin: 14px 0 20px; }
+.usage-tasks button { display: flex; width: 100%; justify-content: space-between; text-align: left; border-width: 0 0 1px; border-radius: 0; padding: 12px 0; gap: 14px; }
+.usage-tasks button > span { min-width: 0; overflow-wrap: anywhere; }
+.usage-tasks strong { font-size: 12px; font-weight: 500; }
+.usage-tasks small { display: block; font-size: 10px; line-height: 1.8; color: #839187; }
+.usage-backfill { margin-top: 20px; padding-top: 16px; border-top: 1px solid #e4eae6; }
+.usage-backfill button { margin-top: 12px; font-size: 11px; }
+@media (max-width: 1100px) { .stat-grid.usage-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 600px) { .usage-summary { grid-template-columns: 1fr; } }

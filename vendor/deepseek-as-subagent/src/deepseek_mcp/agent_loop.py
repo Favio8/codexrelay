@@ -38,6 +38,10 @@ from .resource_budget import (
 from .tools import build_tool_schemas, execute_tool
 from .tool_process import execute_in_subprocess
 from .history_compaction import compact_history
+from .execution_scope import execution_root, scoped_arguments, scope_violations
+from .safety import SandboxViolation, resolve_safe_path
+from .progress_guard import ProgressGuard
+from .workspace_changes import snapshot, changes, workspace_revision
 
 logger = logging.getLogger(__name__)
 
@@ -97,8 +101,23 @@ class _AgentState:
     bash_calls: int = 0
     last_bash_status: str | None = None
     bash_failures: list[dict] = field(default_factory=list)
+    bash_results: list[dict] = field(default_factory=list)
+    active_tool: dict | None = None
     mutation_budget: MutationBudget = field(default_factory=MutationBudget)
     mutations: MutationAccumulator = field(default_factory=MutationAccumulator)
+    progress: ProgressGuard = field(default_factory=ProgressGuard)
+    workspace_before: tuple | None = None
+    responses_with_usage: int = 0
+    responses_without_usage: int = 0
+    request_in_flight: bool = False
+    turns_used: int = 0
+    history_compaction_runs: int = 0
+    applied_steering_messages: int = 0
+    progress_reporter: Callable[[dict], None] | None = None
+    usage_events: list[dict] = field(default_factory=list)
+    cached_input_tokens: int = 0
+    cache_known_responses: int = 0
+    workspace_review: dict | None = None
 
 
 def run_agent(
@@ -109,6 +128,7 @@ def run_agent(
     control_finalize: Callable[[], list[str]] | None = None,
     cancel_signal: CancellationSignal | None = None,
     execution_lease_fd: int | None = None,
+    progress_reporter: Callable[[dict], None] | None = None,
 ) -> dict:
     """Run until a final response or a configured safety limit is reached."""
     controls = _AgentControls(control_poll, control_finalize, cancel_signal)
@@ -119,8 +139,10 @@ def run_agent(
         controls,
         execution_lease_fd,
     )
+    state.progress_reporter = progress_reporter
     try:
         for turn in range(config.max_turns):
+            state.turns_used = turn + 1
             result = _run_turn(state, turn)
             if result is not None:
                 return result
@@ -128,14 +150,15 @@ def run_agent(
     except (AgentLoopCancelled, AgentLoopError) as error:
         _raise_with_mutation_records(state, error)
     except Exception as error:
-        if state.mutations.records:
-            _raise_with_mutation_records(state, error)
-        raise
+        _raise_with_mutation_records(state, error)
 
 
 def _raise_with_mutation_records(
     state: _AgentState, error: BaseException,
 ) -> None:
+    telemetry = _build_telemetry(state, final=True)
+    error.telemetry = telemetry
+    _publish_telemetry(state, telemetry)
     if not state.mutations.records:
         raise error
     reason = error if isinstance(error, AgentLoopError) else "unexpected internal failure"
@@ -145,7 +168,9 @@ def _raise_with_mutation_records(
         if isinstance(error, AgentLoopCancelled)
         else MutationOutcomeError
     )
-    raise error_type(message, tuple(state.mutations.records)) from None
+    wrapped = error_type(message, tuple(state.mutations.records))
+    wrapped.telemetry = telemetry
+    raise wrapped from None
 
 
 def _create_agent_state(
@@ -159,6 +184,11 @@ def _create_agent_state(
         tools=", ".join(config.allowed_tools),
         workspace=config.workspace,
     )
+    if config.task_root is not None:
+        system_prompt += f'\nTask file scope and command working directory: {config.task_root}. File paths may be absolute or relative to this task root. The project lease remains {config.workspace}.\n'
+    if config.write_paths is not None:
+        system_prompt += '\nAllowed file writes: ' + ', '.join(str(path) for path in config.write_paths) + '. Do not format an entire directory when only these files are authorized.\n'
+    system_prompt += '\nPrefer structured Bash executable/args/cwd for ordinary programs. Shell commands use cmd.exe on Windows. Return evidence for claims; completion is pending parent verification. Do not rerun a successful validation when its inputs have not changed.\n'
     if os.name == "nt":
         system_prompt += (
             "\nEnvironment: native Windows. The tool named Bash executes cmd.exe, "
@@ -180,6 +210,7 @@ def _create_agent_state(
         started=started,
         deadline=HardDeadline.after(config.max_run_seconds),
         execution_lease_fd=execution_lease_fd,
+        workspace_before=snapshot(config.workspace) if config.delegation_capability == 'coding' else None,
     )
 
 
@@ -187,7 +218,7 @@ def _run_turn(state: _AgentState, turn: int) -> dict | None:
     _remaining_seconds(state.deadline)
     _ensure_token_budget_available(state)
     _check_cancel(state.controls.cancel)
-    _append_control_messages(state.messages, state.controls.poll)
+    state.applied_steering_messages += _append_control_messages(state.messages, state.controls.poll)
     _compact_history(state)
     _enforce_history_budget(state.messages)
     request_bytes = _encoded_size(
@@ -202,6 +233,8 @@ def _run_turn(state: _AgentState, turn: int) -> dict | None:
     request_config = state.config
     if output_allowance != state.config.max_output_tokens:
         request_config = replace(state.config, max_output_tokens=output_allowance)
+    state.request_in_flight = True
+    _publish_telemetry(state, _build_telemetry(state))
     response = _call_with_retry(
         request_config,
         state.messages,
@@ -210,7 +243,9 @@ def _run_turn(state: _AgentState, turn: int) -> dict | None:
         cancel_signal=state.controls.cancel,
         deadline=state.deadline,
     )
+    state.request_in_flight = False
     message = _record_response(state, response, request_bytes)
+    _publish_telemetry(state, _build_telemetry(state))
     _check_cancel(state.controls.cancel)
     if not message.tool_calls:
         return _finalize_or_steer(state, message, turn)
@@ -229,10 +264,26 @@ def _record_response(state: _AgentState, response, request_bytes: int = 0):
     prompt = _estimate_tokens(request_bytes)
     completion = _estimate_tokens(response_bytes)
     if usage is not None:
+        state.responses_with_usage += 1
         prompt = max(prompt, usage.prompt_tokens)
         completion = max(completion, usage.completion_tokens)
         state.prompt_tokens += usage.prompt_tokens
         state.completion_tokens += usage.completion_tokens
+        if usage.cached_input_tokens is not None:
+            state.cached_input_tokens += usage.cached_input_tokens
+            state.cache_known_responses += 1
+    else:
+        state.responses_without_usage += 1
+    state.usage_events.append({
+        'sequence': len(state.usage_events) + 1, 'occurred_at': time.time(),
+        'prompt': usage.prompt_tokens if usage else None,
+        'completion': usage.completion_tokens if usage else None,
+        'cached_input': usage.cached_input_tokens if usage else None,
+        'cache_write_input': usage.cache_write_input_tokens if usage else None,
+        'available': usage is not None,
+    })
+    # Persist the returned response even if the next budget check terminates this task.
+    _publish_telemetry(state, _build_telemetry(state))
     # Meter every request, including re-sent history. Byte-derived floors are
     # estimates, not exact token counts, and remain active without provider usage.
     state.budget_tokens = getattr(state, "budget_tokens", 0) + prompt + completion
@@ -296,6 +347,7 @@ def _compact_history(state: _AgentState, force: bool = False) -> None:
     if count and _encoded_size(messages, ensure_ascii=False) < _encoded_size(state.messages, ensure_ascii=False):
         state.messages = messages
         state.history_compactions += count
+        state.history_compaction_runs += 1
 
 
 def _estimate_tokens(byte_count: int) -> int:
@@ -340,6 +392,7 @@ def _finalize_or_steer(state: _AgentState, message, turn: int) -> dict | None:
     updates = _poll_control_messages(state.controls.finalize or state.controls.poll)
     if updates:
         _append_steering_update(state.messages, updates)
+        state.applied_steering_messages += len(updates)
         _enforce_history_budget(state.messages)
         return None
     return _build_result(state, message.content, turn)
@@ -348,33 +401,58 @@ def _finalize_or_steer(state: _AgentState, message, turn: int) -> dict | None:
 def _build_result(state: _AgentState, content: str | None, turn: int) -> dict:
     if not content or not content.strip():
         raise AgentIncompleteResponse("model returned an empty final response")
-    total_tokens = state.prompt_tokens + state.completion_tokens
     final_message = content
     notices = filter(
         None,
         (state.mutations.recovery_notice(), state.mutations.warning_notice()),
     )
     final_message = "\n\n".join((*notices, final_message))
+    telemetry = _build_telemetry(state, final=True)
+    _publish_telemetry(state, telemetry)
     return {
+        **telemetry,
         "final_message": final_message,
         "turns_used": turn + 1,
-        "tokens": {
-            "prompt": state.prompt_tokens,
-            "completion": state.completion_tokens,
-            "total": total_tokens,
-        },
-        "tool_calls": state.tool_calls,
-        "budget": {"limit": _token_limit(state), "metered_tokens": state.budget_tokens,
-                   "reported_tokens": total_tokens, "history_compactions": state.history_compactions},
-        "bash": {
-            "calls": state.bash_calls,
-            "failure_count": len(state.bash_failures),
-            "last_status": state.last_bash_status,
-            "failures": list(state.bash_failures),
-        },
-        "duration_seconds": round(max(0.0, time.time() - state.started), 2),
-        "mutations": state.mutations.payload(),
+        "verification": {"status": "pending", "owner": "parent"},
     }
+
+
+def _build_telemetry(state: _AgentState, final: bool = False) -> dict:
+    available = state.responses_with_usage > 0
+    total = state.prompt_tokens + state.completion_tokens if available else None
+    result = {
+        'turns_used': state.turns_used,
+        'tokens': {'prompt': state.prompt_tokens if available else None,
+                   'completion': state.completion_tokens if available else None, 'total': total,
+                   'available': available, 'responses_with_usage': state.responses_with_usage,
+                   'responses_without_usage': state.responses_without_usage,
+                   'interrupted_request': final and state.request_in_flight},
+        'usage_events': list(state.usage_events),
+        'workspace_review': state.workspace_review,
+        'budget': {'limit': _token_limit(state), 'metered_tokens': state.budget_tokens,
+                   'reported_tokens': total, 'history_compactions': state.history_compactions,
+                   'compaction_runs': state.history_compaction_runs,
+                   'warning': state.budget_tokens >= _token_limit(state) * 0.8},
+        'tool_calls': state.tool_calls,
+        'bash': {'calls': state.bash_calls, 'failure_count': len(state.bash_failures),
+                 'last_status': state.last_bash_status, 'failures': list(state.bash_failures),
+                 'results': list(state.bash_results)},
+        'active_tool': {**state.active_tool, 'status': 'interrupted' if final else 'running'} if state.active_tool else None,
+        'duration_seconds': round(max(0.0, time.time() - state.started), 2),
+        'mutations': state.mutations.payload(),
+        'applied_steering_messages': state.applied_steering_messages,
+    }
+    if state.cache_known_responses and state.cache_known_responses == state.responses_with_usage:
+        result['tokens']['cached_input'] = state.cached_input_tokens
+    if final and state.workspace_before is not None:
+        result['workspace_changes'] = changes(state.config.workspace, state.workspace_before)
+        result['workspace_changes']['out_of_scope'] = scope_violations(state.config, result['workspace_changes'])
+    return result
+
+
+def _publish_telemetry(state: _AgentState, value: dict) -> None:
+    if state.progress_reporter is not None:
+        state.progress_reporter(value)
 
 
 def _execute_planned_tools(state: _AgentState, tool_calls, turn: int) -> None:
@@ -396,12 +474,35 @@ def _execute_planned_tools(state: _AgentState, tool_calls, turn: int) -> None:
 def _steer_before_tools(state: _AgentState, tool_calls, updates: list[str]) -> None:
     _append_skipped_tool_responses(state.messages, tool_calls)
     _append_steering_update(state.messages, updates)
+    state.applied_steering_messages += len(updates)
     _enforce_history_budget(state.messages)
 
 
 def _execute_and_record_tool(state: _AgentState, tool_call, turn: int) -> None:
     remaining = _remaining_seconds(state.deadline)
+    name = tool_call.function.name
+    try:
+        arguments = json.loads(tool_call.function.arguments)
+    except (ValueError, TypeError):
+        arguments = {}
+    revision = workspace_revision(execution_root(state.config))
+    if name in {'Write', 'Edit', 'NotebookEdit'} and isinstance(arguments, dict) and arguments.get('path'):
+        try:
+            target = resolve_safe_path(scoped_arguments(name, arguments, state.config)['path'], state.config.workspace)
+            key = os.path.normcase(str(target))
+            if state.workspace_before is not None and key not in state.progress.file_versions:
+                original = state.workspace_before[0].get(str(target.relative_to(state.config.workspace)))
+                if original is not None:
+                    state.progress.mutation(key, original)
+        except (OSError, ValueError, SandboxViolation):
+            pass
+    try:
+        state.progress.check(name, arguments, revision)
+    except RuntimeError as error:
+        raise AgentLoopError(str(error)) from None
     state.tool_calls += 1
+    state.active_tool = {'name': name, 'tool_call_id': tool_call.id, 'turn': turn + 1}
+    _publish_telemetry(state, _build_telemetry(state))
     result = _execute_one_tool(
         state.config,
         tool_call,
@@ -413,12 +514,33 @@ def _execute_and_record_tool(state: _AgentState, tool_call, turn: int) -> None:
         deadline=state.deadline,
         outcome_reporter=state.mutations.add,
     )
+    state.active_tool = None
     if tool_call.function.name == "Bash":
-        record_bash_result(state, result, turn)
+        record_bash_result(state, result, turn, tool_call.id)
+        if state.workspace_before is not None and (state.config.task_root is not None or state.config.write_paths is not None):
+            observed = changes(state.config.workspace, state.workspace_before)
+            if scope_violations(state.config, observed):
+                raise AgentLoopError('TASK_SCOPE_VIOLATION: command changed files outside the authorized task scope; inspect observed workspace changes')
+    state.progress.record(name, arguments, revision, result)
+    if name in {'Write', 'Edit', 'NotebookEdit'} and isinstance(arguments, dict):
+        try:
+            scoped = scoped_arguments(name, arguments, state.config)
+            target = scoped.get('path')
+            if target:
+                target = resolve_safe_path(target, state.config.workspace)
+                from .file_io import read_workspace_text
+                _, identity = read_workspace_text(state.config.workspace, str(target))
+                state.progress.mutation(os.path.normcase(str(target)), identity.digest.hex())
+        except RuntimeError as error:
+            if str(error).startswith('NO_PROGRESS:'):
+                raise AgentLoopError(str(error)) from None
+        except (OSError, ValueError, SandboxViolation):
+            pass
     state.messages.append(
         {"role": "tool", "tool_call_id": tool_call.id, "content": result}
     )
     _enforce_history_budget(state.messages)
+    _publish_telemetry(state, _build_telemetry(state))
     _check_cancel(state.controls.cancel)
 
 
@@ -441,6 +563,10 @@ def _execute_one_tool(
         return f"ERROR: invalid JSON in tool arguments: {error}"
     if not isinstance(args, dict):
         return "ERROR: tool arguments must be a JSON object"
+    try:
+        args = scoped_arguments(tool_name, args, config)
+    except SandboxViolation as error:
+        return f'ERROR: {error}'
     logged_name = tool_name if tool_name in config.allowed_tools else "<unknown>"
     logger.info("Turn %d tool_call: %s arg_count=%d", turn, logged_name, len(args))
     kwargs = _tool_execution_options(

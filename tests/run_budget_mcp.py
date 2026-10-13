@@ -53,6 +53,8 @@ async def run():
                 assert outcome['status']=='failed',outcome
                 assert outcome['failure']['code']=='local_token_budget',outcome
                 assert outcome['failure']['metrics']['limit']==32768,outcome
+                assert outcome['telemetry']['tokens']['prompt'] == 41000, outcome
+                assert outcome['telemetry']['workspace_changes']['added'] == ['budget-output.txt'], outcome
                 output=workspace/'budget-output.txt'
                 assert output.read_text()=='preserve completed mutation\n'
                 pending=(await call('get_deepseek_recovery'))['pending']

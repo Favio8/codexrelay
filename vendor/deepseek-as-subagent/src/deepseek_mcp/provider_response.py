@@ -25,6 +25,8 @@ class ProviderContentFiltered(ProviderResponseError):
 class ProviderUsage:
     prompt_tokens: int
     completion_tokens: int
+    cached_input_tokens: int | None = None
+    cache_write_input_tokens: int | None = None
 
 
 @dataclass(frozen=True)
@@ -102,7 +104,13 @@ def _usage(value: object) -> ProviderUsage | None:
         or completion < 0
     ):
         raise ProviderResponseError("provider usage counters are invalid")
-    return ProviderUsage(prompt, completion)
+    details = value.get('prompt_tokens_details') or {}
+    details = details if isinstance(details, dict) else {}
+    cached = value.get('prompt_cache_hit_tokens', details.get('cached_tokens'))
+    written = value.get('cache_creation_input_tokens')
+    def optional_counter(counter):
+        return counter if isinstance(counter, int) and not isinstance(counter, bool) and 0 <= counter <= prompt else None
+    return ProviderUsage(prompt, completion, optional_counter(cached), optional_counter(written))
 
 
 def _finish_reason(value: object, message: ProviderMessage) -> str:

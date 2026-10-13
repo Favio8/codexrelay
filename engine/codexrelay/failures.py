@@ -4,6 +4,10 @@ import re
 
 def classify_error(error):
     text = str(error or "")
+    if 'NO_PROGRESS:' in text:
+        return {'code': 'no_progress', 'title': '重复执行未产生进展', 'hint': '两次等价失败或重复内容回退已触发停止。核验已有修改后，由 Codex 继续剩余工作。'}
+    if 'TASK_SCOPE_VIOLATION:' in text:
+        return {'code': 'task_scope_violation', 'title': '命令改动超出任务范围', 'hint': '任务已停止；检查记录中的文件差异。已有文件未自动回滚。'}
     if "LOCAL_TOKEN_BUDGET" in text or "run token budget" in text:
         return {"code": "local_token_budget", "title": "本地任务 Token 预算已用完",
                 "hint": "这不是账户余额不足。先让 Codex 核验已有修改，再继续剩余子任务；也可在供应商设置中提高单次任务预算。",

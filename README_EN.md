@@ -21,6 +21,8 @@ A Windows desktop manager for Codex external agents. Codex plans and reviews; De
 
 [Windows x64 installer — v0.1.3 Beta](https://github.com/Favio8/codexrelay/releases/download/v0.1.3/CodexRelay_0.1.3_x64-setup.exe) · [Release notes and checksums](https://github.com/Favio8/codexrelay/releases/tag/v0.1.3)
 
+The current source version is **0.2.0**, with delegation usage statistics, optional Codex log usage import, a Pi backend and recovery improvements. See the [0.2.0 delivery record](docs/RELEASE-0.2.0.md) for build and local upgrade verification. The download above still points to the published 0.1.3 beta.
+
 Verified on Windows 11 x64. Requires an existing Codex installation. Python is bundled; end users do not need developer tools. The installer downloads WebView2 if missing. This beta is unsigned and has no automatic updater.
 
 ## Get started
@@ -52,7 +54,7 @@ The switch controls CodexRelay external agents only. It does not disable Codex's
 
 Tauri 2 / Rust / React / TypeScript / Python 3.12 / SQLite.
 
-See [development](docs/DEVELOPMENT.md), [architecture](docs/ARCHITECTURE.md), [testing](docs/TESTING.md) and [contributing](CONTRIBUTING.md). Automatic updates, cost reporting and concurrent agents are outside the current beta.
+See [development](docs/DEVELOPMENT.md), [architecture](docs/ARCHITECTURE.md), [testing](docs/TESTING.md) and [contributing](CONTRIBUTING.md). The local **0.2.0** build adds a Pi Agent SDK backend, delegated usage/cost estimates, response-level cache accounting and default-off Codex log statistics. See [delivery and acceptance scope](docs/ROADMAP-0.2.0.md). It has not been published to GitHub; the release links above still refer to the published beta. Automatic updates and concurrent agents remain outside this release.
 
 ## Credits and license
 

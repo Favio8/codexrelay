@@ -4,6 +4,7 @@ import json
 import uuid
 from pathlib import Path
 from .bash_tool import execute_bash
+from .execution_scope import scoped_arguments
 from .config import Config
 from .file_io import (
     MAX_TEXT_FILE_BYTES,
@@ -485,6 +486,10 @@ def execute_tool(
         return "ERROR: tool arguments must be an object"
     if name not in config.allowed_tools:
         return f"ERROR: tool '{name}' is not allowed by configuration"
+    try:
+        args = scoped_arguments(name, args, config)
+    except SandboxViolation as error:
+        return f'ERROR: {error}'
     if name == "Bash":
         kwargs = {"lease_fd": execution_lease_fd}
         if max_bash_timeout is not None:

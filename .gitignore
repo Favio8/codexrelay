@@ -1,5 +1,6 @@
 /doc_ignore_local_use/
 /node_modules/
+/vendor/pi-agent/node_modules/
 /dist/
 /runtime/
 /src-tauri/target/

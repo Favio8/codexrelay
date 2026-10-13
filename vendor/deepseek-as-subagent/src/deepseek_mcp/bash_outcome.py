@@ -9,9 +9,10 @@ class BashOutcomeSink(Protocol):
     bash_calls: int
     last_bash_status: str | None
     bash_failures: list[dict]
+    bash_results: list[dict]
 
 
-def record_bash_result(state: BashOutcomeSink, output: str, turn: int) -> None:
+def record_bash_result(state: BashOutcomeSink, output: str, turn: int, tool_call_id: str | None = None) -> None:
     """Track tool-level failures while allowing subsequent successful repairs."""
     state.bash_calls += 1
     match = re.fullmatch(r"\[exit (-?\d+)\]", output.partition("\n")[0])
@@ -22,6 +23,8 @@ def record_bash_result(state: BashOutcomeSink, output: str, turn: int) -> None:
         exit_code = None
         status = "tool_error" if output.startswith("ERROR:") else "unknown"
     state.last_bash_status = status
+    state.bash_results.append({'turn': turn + 1, 'tool_call_id': tool_call_id,
+                               'status': status, 'exit_code': exit_code})
     if status != "success":
         state.bash_failures.append({
             "turn": turn + 1,

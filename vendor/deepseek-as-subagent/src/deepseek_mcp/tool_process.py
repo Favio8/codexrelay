@@ -6,7 +6,9 @@ import os
 import subprocess
 import threading
 import uuid
-from dataclasses import dataclass
+import tempfile
+from pathlib import Path
+from dataclasses import dataclass, replace
 from typing import Callable
 
 from .child_runtime import (
@@ -67,6 +69,9 @@ def _environment() -> dict[str, str]:
 def _config_payload(config) -> dict:
     return {
         "workspace": str(config.workspace),
+        "task_root": str(config.task_root) if config.task_root is not None else None,
+        'write_paths': [str(path) for path in config.write_paths] if config.write_paths is not None else None,
+        'command_home': str(config.command_home) if config.command_home is not None else None,
         "model": config.model,
         "max_turns": config.max_turns,
         "allowed_tools": list(config.allowed_tools),
@@ -437,7 +442,15 @@ def _complete_tool_call(
     return result
 
 
-def execute_in_subprocess(
+def execute_in_subprocess(config, name, *args, **kwargs) -> str:
+    if name != 'Bash':
+        return _execute_in_subprocess(config, name, *args, **kwargs)
+    # Parent owns cleanup even when Windows forcibly terminates the tool child.
+    with tempfile.TemporaryDirectory(prefix='codexrelay-command-home-') as home:
+        return _execute_in_subprocess(replace(config, command_home=Path(home)), name, *args, **kwargs)
+
+
+def _execute_in_subprocess(
     config,
     name: str,
     arguments: dict,

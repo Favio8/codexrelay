@@ -83,7 +83,9 @@ async def run():
                         raise AssertionError(str(reply))
                     return json.loads(reply.content[0].text)
                 listing = await client.list_tools()
-                assert len(listing.tools) == 11
+                tools = {tool.name: tool for tool in listing.tools}
+                assert {'start_deepseek', 'delegate_to_deepseek', 'get_deepseek_recovery', 'record_deepseek_verification'} <= tools.keys()
+                assert {'task_root', 'token_budget', 'write_paths'} <= tools['start_deepseek'].inputSchema['properties'].keys()
                 ping = await call("ping")
                 assert Path(ping["workspace"]) == workspace
                 calls_before = FixtureHandler.calls
@@ -94,8 +96,16 @@ async def run():
                 result = await call("delegate_to_deepseek_readonly", task="Read input")
                 assert result["status"] == "completed", result
                 assert "PROBE_314159" in json.dumps(result), result
+                assert result['verification']['status'] == 'pending'
+                assert result['telemetry']['tokens']['total'] > 0
+                verified = await call('record_deepseek_verification', job_id=result['job_id'], passed=True,
+                                      evidence='Independently read input.txt and compared PROBE_314159 with the returned file content')
+                assert verified['verification']['status'] == 'passed'
+                recorded = await call('get_deepseek_result', job_id=result['job_id'])
+                assert recorded['result']['verification']['status'] == 'passed'
                 coding = await call("delegate_to_deepseek", task="WRITE_FIXTURE")
                 assert coding["status"] == "completed", coding
+                assert coding['telemetry']['workspace_changes']['added'] == ['created.txt']
                 created = workspace / "created.txt"
                 assert created.read_text() == "created by real tool\n"
                 recovery = await call("get_deepseek_recovery")
@@ -105,8 +115,29 @@ async def run():
                 assert record["sha256"] == hashlib.sha256(created.read_bytes()).hexdigest()
                 ack = await call("acknowledge_deepseek_mutations", transaction_ids=[record["transaction_id"]])
                 assert not ack["pending"], ack
+                assert {'start_agent','delegate_to_agent_readonly','get_task_recovery','acknowledge_workspace_review'} <= tools.keys()
+                service.dispatch('activate_execution',{'backend':'pi','provider_id':saved['id']})
+                pi_read = await call('delegate_to_agent_readonly',task='Read input')
+                assert pi_read['status']=='completed' and pi_read['backend_id']=='pi', pi_read
+                assert 'PROBE_314159' in json.dumps(pi_read)
+                created.unlink()
+                pi_write = await call('delegate_to_agent',task='WRITE_FIXTURE',write_paths=['created.txt'])
+                assert pi_write['status']=='completed' and created.read_text()=='created by real tool\n', pi_write
+                checks = await call('get_task_recovery')
+                assert checks['pending'] and len(checks['checks'])==1, checks
+                await call('acknowledge_task_mutations',transaction_ids=[item['transaction_id'] for item in checks['pending']])
+                service.dispatch('activate_execution',{'backend':'deepseek','provider_id':saved['id']})
+                blocked_review = await call('start_agent_readonly',task='Read input')
+                assert 'WORKSPACE_REVIEW_REQUIRED' in blocked_review['error'], blocked_review
+                inspected=checks['checks'][0]
+                assert inspected['current_hashes']['created.txt']==hashlib.sha256(created.read_bytes()).hexdigest()
+                await call('acknowledge_workspace_review',review_id=inspected['review_id'],state_sha256=inspected['state_sha256'],evidence='Independently checked created.txt contents and SHA-256')
+                service.dispatch('activate_execution',{'backend':'pi','provider_id':saved['id']})
                 started = await call("start_deepseek_readonly", task="SLOW read input")
                 assert started["ok"], started
+                assert store.task(started['job_id'])['backend_id']=='deepseek', 'Legacy names must not silently route to Pi'
+                steering = await call('send_deepseek_message', job_id=started['job_id'], message='Keep the original read-only scope')
+                assert steering['job_id'] == started['job_id'] and steering['message_queued']
                 service.dispatch("set_enabled", {"enabled": False})
                 refused = await call("start_deepseek_readonly", task="Read input")
                 assert "DISABLED" in refused["error"], refused
@@ -121,6 +152,18 @@ async def run():
                     await asyncio.sleep(.2)
                 assert final["status"] == "cancelled", final
                 assert created.exists()
+                service.dispatch('set_enabled',{'enabled':True})
+                pi_started=await call('start_agent_readonly',task='SLOW read input')
+                assert pi_started['ok'],pi_started
+                service.dispatch('activate_execution',{'backend':'deepseek','provider_id':saved['id']})
+                assert store.task(pi_started['job_id'])['backend_id']=='pi'
+                await call('cancel_task',job_id=pi_started['job_id'])
+                for _ in range(100):
+                    pi_final=await call('get_task_result',job_id=pi_started['job_id'])
+                    if pi_final['ready']:break
+                    await asyncio.sleep(.1)
+                assert pi_final['status']=='cancelled',pi_final
+                service.dispatch('set_enabled',{'enabled':False})
                 print(json.dumps({"ok":True,"tools":len(listing.tools),"provider":"local deterministic fixture, not paid model","checks":["real stdio handshake","same-session hot enable/disable","readonly real file access","coding real Write","mutation hash and exact acknowledgement","background cancellation from GUI control state","disabled mode preserves result/recovery"],"http_calls":FixtureHandler.calls},ensure_ascii=False,indent=2))
     server.shutdown()
 

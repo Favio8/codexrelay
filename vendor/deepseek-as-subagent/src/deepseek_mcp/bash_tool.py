@@ -5,13 +5,17 @@ import os
 import signal
 import subprocess
 import threading
+import tempfile
+from contextlib import nullcontext
 import ctypes
 from ctypes import wintypes
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from .config import Config
 from .file_identity import ToolInputError, bounded_integer
 from .safety import SandboxViolation, check_command
+from .execution_scope import execution_root
 
 MAX_TOOL_OUTPUT = 50_000
 MAX_BASH_TIMEOUT = 600
@@ -121,14 +125,16 @@ def _format_result(result: _BashResult) -> str:
     return combined
 
 
-def _host_environment(workspace) -> dict[str, str]:
+def _host_environment(home_directory) -> dict[str, str]:
     """Pass execution essentials only; never inherit the real user home."""
     environment = {
         name: os.environ[name] for name in _HOST_ENVIRONMENT if name in os.environ
     }
     environment.setdefault("PATH", os.defpath)
-    home = str(workspace)
+    home = str(home_directory)
     environment["HOME"] = home
+    environment['TEMP'] = home
+    environment['TMP'] = home
     if os.name == "nt":
         drive, path = os.path.splitdrive(home)
         environment["USERPROFILE"] = home
@@ -137,10 +143,13 @@ def _host_environment(workspace) -> dict[str, str]:
     return environment
 
 
-def _host_argv(command: str) -> list[str]:
+def _host_argv(command: str | list[str]) -> str | list[str]:
+    if isinstance(command, list):
+        return command
     if os.name == "nt":
         interpreter = os.environ.get("COMSPEC") or "cmd.exe"
-        return [interpreter, "/d", "/s", "/c", command]
+        # Python list2cmdline uses CRT escaping; cmd.exe parses quotes differently.
+        return f'"{interpreter}" /d /s /c "{command}"'
     return ["/bin/sh", "-c", command]
 
 
@@ -239,12 +248,13 @@ def _create_windows_job(process: subprocess.Popen[bytes]) -> _WindowsJob | None:
 
 
 def _start_host_command(
-    command: str, config: Config, stdout: _CapturedStream, stderr: _CapturedStream,
+    command: str | list[str], config: Config, stdout: _CapturedStream, stderr: _CapturedStream,
+    home_directory: str, cwd: Path | None = None,
 ) -> tuple[subprocess.Popen[bytes], list[threading.Thread], list, _WindowsJob | None]:
     process = subprocess.Popen(
         _host_argv(command), shell=False, stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=config.workspace,
-        env=_host_environment(config.workspace), close_fds=True, **_host_options(),
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd or execution_root(config),
+        env=_host_environment(home_directory), close_fds=True, **_host_options(),
     )
     try:
         job = _create_windows_job(process)
@@ -284,7 +294,7 @@ def _trusted_host_result(
     )
 
 
-def _run_on_trusted_host(command: str, config: Config, timeout: int) -> _BashResult:
+def _run_on_trusted_host(command: str | list[str], config: Config, timeout: int, cwd: Path | None = None) -> _BashResult:
     """Run below tool_child so its cancellation/deadline boundary owns cleanup."""
     process: subprocess.Popen[bytes] | None = None
     job: _WindowsJob | None = None
@@ -294,30 +304,40 @@ def _run_on_trusted_host(command: str, config: Config, timeout: int) -> _BashRes
     stderr = _CapturedStream()
     timed_out = False
     cause: BaseException | None = None
-    try:
-        process, readers, streams, job = _start_host_command(command, config, stdout, stderr)
+    home_context = nullcontext(str(config.command_home)) if config.command_home is not None else tempfile.TemporaryDirectory(prefix='codexrelay-command-home-')
+    with home_context as home:
         try:
-            process.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            timed_out = True
-    except BaseException as exc:
-        cause = exc
-    finally:
-        stopped = process is None or _stop_host_process(process)
-        if job is not None:
-            stopped = job.close() and stopped
-        readers_ok = _join_readers(readers, streams)
+            process, readers, streams, job = _start_host_command(command, config, stdout, stderr, home, cwd)
+            try:
+                process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+        except BaseException as exc:
+            cause = exc
+        finally:
+            stopped = process is None or _stop_host_process(process)
+            if job is not None:
+                stopped = job.close() and stopped
+            readers_ok = _join_readers(readers, streams)
     return _trusted_host_result(
         process, stdout, stderr, timed_out, cause, stopped, readers_ok,
     )
 
 
-def _command_request(args: dict, max_timeout: int | None) -> tuple[str, int] | str:
-    command = args.get("command", "")
-    if not isinstance(command, str) or not command.strip():
-        return "ERROR: missing required 'command' argument"
+def _command_request(args: dict, max_timeout: int | None) -> tuple[str | list[str], int] | str:
+    if 'executable' in args and 'command' in args:
+        return 'ERROR: choose executable/args or command, not both'
+    if 'executable' in args:
+        executable, argv = args['executable'], args.get('args', [])
+        if not isinstance(executable, str) or not executable.strip() or not isinstance(argv, list) or not all(isinstance(value, str) for value in argv):
+            return 'ERROR: executable and args must be a program string and a list of strings'
+        command = [executable, *argv]
+    else:
+        command = args.get("command", "")
+        if not isinstance(command, str) or not command.strip():
+            return "ERROR: missing required string 'command' argument"
     try:
-        check_command(command)
+        check_command(subprocess.list2cmdline(command) if isinstance(command, list) else command)
         timeout = _parse_timeout(args)
     except (SandboxViolation, ToolInputError) as exc:
         return f"ERROR: {exc}"
@@ -337,8 +357,18 @@ def execute_bash(
     if isinstance(request, str):
         return request
     command, timeout = request
+    cwd = execution_root(config)
+    if args.get('cwd') is not None:
+        try:
+            root = execution_root(config)
+            candidate = Path(args['cwd'])
+            cwd = (candidate if candidate.is_absolute() else root / candidate).resolve(strict=True)
+            if not cwd.is_dir() or not cwd.is_relative_to(root):
+                return 'ERROR: cwd must be a directory within the task root'
+        except (OSError, TypeError, ValueError) as error:
+            return f'ERROR: invalid cwd: {error}'
     try:
-        result = _run_on_trusted_host(command, config, timeout)
+        result = _run_on_trusted_host(command, config, timeout, cwd)
     except (TrustedHostError, RuntimeError, TypeError, ValueError) as exc:
         return f"ERROR: trusted host unavailable: {exc}"
     if result.timed_out:

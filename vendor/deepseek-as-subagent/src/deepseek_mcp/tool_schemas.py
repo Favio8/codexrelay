@@ -54,16 +54,19 @@ TOOL_SCHEMAS = {
     "Bash": {
         "name": "Bash",
         "description": (
-            "Run a bounded shell command on the trusted host in the workspace. "
+            "Run a bounded program or shell command on the trusted host. Prefer executable/args/cwd for normal programs; use command for shell syntax. "
             f"Timeout defaults to {DEFAULT_BASH_TIMEOUT}s and is capped at {MAX_BASH_TIMEOUT}s."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "command": {"type": "string", "description": "Shell command."},
+                "executable": {"type": "string", "description": "Program path/name, executed directly without a shell."},
+                "args": {"type": "array", "items": {"type": "string"}, "description": "Literal program arguments; do not add shell quotes."},
+                "cwd": {"type": "string", "description": "Optional working directory within the task root."},
                 "timeout": {"type": "integer", "description": "Timeout in seconds."},
             },
-            "required": ["command"],
+            "anyOf": [{"required": ["command"]}, {"required": ["executable"]}],
         },
     },
     "Glob": {

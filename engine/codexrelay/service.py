@@ -132,7 +132,76 @@ class Service:
                 "active_tasks": [t["id"] for t in snapshot["tasks"] if t["status"] in {"queued", "running", "cancelling"}],
                 "connections": snapshot["instances"], "integration": status(self.store)}
 
+    def test_backend(self, backend, provider_id, slot='flash'):
+        import tempfile
+        from dataclasses import replace
+        from .backends import build_config, create_manager
+        if slot not in {'flash','pro'}:raise ValueError('未知模型档位')
+        provider=self.store.provider(provider_id)
+        credential=self.vault.get(provider['credential_id'])
+        with tempfile.TemporaryDirectory(prefix='codexrelay-probe-') as directory:
+            workspace=Path(directory)
+            marker=uuid.uuid4().hex
+            (workspace/'probe.txt').write_text(marker,encoding='utf-8')
+            config=replace(build_config(provider,'readonly',slot,workspace,credential),
+                           max_output_tokens=512,max_turns=4,max_run_seconds=45,max_total_tokens=32768)
+            # Reserve the same database slot as delegation before calling the provider;
+            # a snapshot check alone races with another MCP or GUI process.
+            with self.store.backend_probe(provider, backend, slot, workspace):
+                try:
+                    result=create_manager(backend).run_sync('Read probe.txt with the Read tool and return its exact contents.',config)
+                except Exception as error:
+                    message=str(error)
+                    raise ValueError(message.replace(credential,'[REDACTED]') if credential else message) from None
+            if not result.get('tool_calls') or marker not in result.get('final_message',''):
+                raise ValueError('后端未完成实际文件读取，请检查模型工具兼容性')
+        status={'ok':True,'backend':backend,'model':provider[slot+'_model'],'revision':provider['revision'],'at':time.time(),'tool_roundtrip':True}
+        self.store.set_setting('backend_test:'+backend+':'+provider_id+':'+slot,status)
+        return status
+
     def dispatch(self, method, params):
+        if method == 'test_backend':
+            return self.test_backend(**params)
+        if method == 'usage_requests_today':
+            from .usage import requests_today
+            return requests_today(self.store)
+        if method.startswith('codex_usage_'):
+            from . import codex_usage
+            action = {'codex_usage_today':codex_usage.today,'codex_usage_settings':codex_usage.settings,
+                'codex_usage_configure':codex_usage.configure,'codex_usage_clear':codex_usage.clear,
+                'codex_usage_save_price':codex_usage.save_price}.get(method)
+            if action is None:raise ValueError('未知统计操作')
+            return action(self.store,**params)
+        if method == 'backend_catalog':
+            from .backends import catalog
+            return catalog()
+        if method == 'activate_execution':
+            from .backends import catalog
+            backend = params['backend']
+            if not any(item['id']==backend and item['installed'] for item in catalog()):
+                raise ValueError('此执行后端尚未安装或不可用')
+            with self.store.connect() as db:
+                db.execute('BEGIN IMMEDIATE')
+                if not db.execute('SELECT 1 FROM providers WHERE id=?',(params['provider_id'],)).fetchone():
+                    raise ValueError('请选择供应商')
+                db.executemany('INSERT OR REPLACE INTO settings VALUES (?,?)',[
+                    ('active_backend',json.dumps(backend)),('active_provider_id',json.dumps(params['provider_id']))])
+            return {'backend':backend,'provider_id':params['provider_id']}
+        if method == 'usage_today':
+            from .usage import usage_today
+            return usage_today(self.store)
+        if method == 'get_usage_prices':
+            from .usage import settings_from
+            with self.store.connect() as db:
+                return settings_from(db)
+        if method == 'save_usage_price':
+            from .usage import save_price
+            return save_price(self.store, **params)
+        if method == 'backfill_usage_price':
+            from .usage import backfill_price
+            return backfill_price(self.store, **params)
+        if method == 'get_task':
+            return self.store.task(params['id'])
         if method == "snapshot":
             return self.snapshot()
         if method == "set_enabled":

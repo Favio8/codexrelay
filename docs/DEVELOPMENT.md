@@ -7,12 +7,15 @@ Use Windows x64, Node.js 22 LTS, Rust with the MSVC target, Visual Studio C++ bu
 ```powershell
 npm ci
 .\scripts\prepare-runtime.ps1 -Python 'C:\path\to\standalone-python\python.exe'
+.\scripts\prepare-pi-runtime.ps1
 npm run desktop:dev
 ```
 
 prepare-runtime.ps1 copies the interpreter's base distribution into runtime/, installs hash-pinned Python dependencies, copies the application and vendored engine, and verifies imports. End users receive this runtime in the installer.
 
 After Python source changes, run scripts/sync-engine.ps1. After dependency changes, update the dependency lock and prepare the runtime again.
+
+The Pi SDK uses its own locked dependency manifest under vendor/pi-agent. prepare-pi-runtime.ps1 verifies the pinned Node archive, bundles the SDK bridge and retains licenses; it does not install Node globally. The application invokes the bundled executable by absolute path. After changing only Python code, synchronize the runtime and use `npm run tauri -- bundle --bundles nsis` to repackage an already-built desktop executable. Frontend/native changes require a new desktop build.
 
 ## Build the installer
 

@@ -2,6 +2,7 @@ param([string]$Toolchain)
 $ErrorActionPreference = 'Stop'
 $taskRoot = Split-Path -Parent $PSScriptRoot
 if ($Toolchain) {
+    $Toolchain = (Resolve-Path -LiteralPath $Toolchain).Path
     $taskVc = Get-ChildItem (Join-Path $Toolchain 'VC\Tools\MSVC') -Directory | Sort-Object Name -Descending | Select-Object -First 1
     $taskSdkRoot = Join-Path $Toolchain 'Windows Kits\10'
     $taskSdk = Get-ChildItem (Join-Path $taskSdkRoot 'Lib') -Directory | Sort-Object Name -Descending | Select-Object -First 1
@@ -17,6 +18,7 @@ if ($Toolchain) {
 }
 Push-Location $taskRoot
 try {
+    & (Join-Path $PSScriptRoot 'prepare-pi-runtime.ps1')
     & (Join-Path $PSScriptRoot 'sync-engine.ps1')
     & (Join-Path $taskRoot 'runtime\python.exe') -I -X utf8 (Join-Path $PSScriptRoot 'generate-notices.py')
     if ($LASTEXITCODE -ne 0) { throw 'Release license notices could not be generated' }

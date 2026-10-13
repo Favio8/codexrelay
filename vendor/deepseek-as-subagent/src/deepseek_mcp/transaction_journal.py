@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Iterator
 from . import posix_atomic_commit, windows_atomic_commit, windows_file_io
-from .file_io import read_workspace_text
+from .file_io import read_workspace_text, WorkspaceFileNotFound
 from .safety import SandboxViolation, resolve_safe_path
 from .workspace_guard import bind_workspace_identity, require_workspace_identity
 JOURNAL_DIRECTORY = Path.home() / ".deepseek-mcp" / "transactions"
@@ -448,13 +448,19 @@ def append_warning(config, transaction_id: str, warning: str) -> dict[str, objec
         store.write(_name(identifier), _encode(updated), existing[1])
     return updated.public_payload("pending")
 def _classify(config, record: _StoredRecord) -> dict[str, object]:
+    current_sha256, exists, observed_state = None, None, 'unreadable'
     try:
         with bind_workspace_identity(record.workspace_identity):
             _text, current = read_workspace_text(config.workspace, record.path)
         status = "committed" if current.digest is not None and current.digest.hex() == record.sha256 else "uncertain"
+        current_sha256, exists = current.digest.hex() if current.digest is not None else None, True
+        observed_state = 'matches' if status == 'committed' else 'changed'
+    except WorkspaceFileNotFound:
+        status, exists, observed_state = 'uncertain', False, 'missing'
     except (OSError, RuntimeError, ValueError, SandboxViolation):
         status = "uncertain"
-    return record.public_payload(status)
+    return {**record.public_payload(status), 'current_sha256': current_sha256,
+            'exists': exists, 'observed_state': observed_state}
 def pending_records(config) -> list[dict[str, object]]:
     identity = _workspace_identity(config)
     records: list[_StoredRecord] = []

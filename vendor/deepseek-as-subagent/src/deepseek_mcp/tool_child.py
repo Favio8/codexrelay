@@ -103,6 +103,10 @@ def _config(settings: object) -> Config:
     if not isinstance(workspace, str):
         raise ValueError("tool workspace is invalid")
     values["workspace"] = Path(workspace)
+    if values.get('task_root') is not None:
+        values['task_root'] = Path(values['task_root'])
+    if values.get('command_home') is not None:
+        values['command_home'] = Path(values['command_home'])
     return Config(api_key="", **values)
 
 

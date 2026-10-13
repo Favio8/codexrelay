@@ -9,6 +9,20 @@ the exact reviewed IDs. If coding Bash may have run before an interruption,
 inspect the workspace independently before continuing.
 After every delegation, verify delegated output against the requested acceptance
 criteria before relying on it.
+CodexRelay adds optional task_root, write_paths and token_budget to delegation
+tools. Use a specific task directory and explicit allowed output files for batch
+formatting/refactoring; a directory-wide formatter can also process Markdown.
+Use structured Bash executable/args/cwd for normal programs instead of probing
+Windows shell quotes. Two equivalent failures without changed inputs stop a run.
+On no_progress/task_scope_violation, inspect existing changes and recovery, then
+finish the remaining focused work as the parent instead of replaying the full job.
+Read telemetry even after failure/cancellation; reported provider usage and local
+estimated budget are separate. workspace_changes is an observed before/after diff,
+including command changes, not a transaction journal or a filesystem sandbox.
+Completed means execution ended. CodexRelay's record_deepseek_verification records
+the parent's independently checked verdict and evidence; never mark model claims
+verified without inspecting actual files/tests. A queued steering message is not
+yet applied; telemetry reports the count of applied steering messages.
 
 API reference:
 - `ping()`: check that the MCP server is available.

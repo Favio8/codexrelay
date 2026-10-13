@@ -70,6 +70,8 @@ class JobRecord:
     finished_at: float | None = None
     result: dict[str, Any] | None = None
     error: str | None = None
+    telemetry: dict[str, Any] | None = None
+    progress_reporter: Any = field(default=None, repr=False)
     usage_recorded: bool = False
     usage_recording: bool = False
     cancel_event: threading.Event = field(default_factory=threading.Event, repr=False)
@@ -94,7 +96,13 @@ class JobRecord:
             "started_at": self.started_at,
             "finished_at": self.finished_at,
             "error": self.error,
+            "telemetry": self.telemetry,
         }
+
+    def report(self, value):
+        self.telemetry = value
+        if self.progress_reporter:
+            self.progress_reporter(value)
 
     def queue_message(self, message: str) -> None:
         """Atomically enqueue steering unless the agent has begun finalizing."""
@@ -143,31 +151,34 @@ class _JobOutcome:
     result: dict[str, Any] | None
     error: str | None
     preserve_mutation_error: bool = False
+    telemetry: dict[str, Any] | None = None
 
 
 def _run_background_agent(
     task: str, config: Config, job: JobRecord, lease: WorkspaceExecutionLease,
+    runner=None,
 ) -> _JobOutcome:
     try:
-        result = run_agent(
+        result = (runner or run_agent)(
             task,
             config,
             control_poll=lambda: job.drain_messages(),
             control_finalize=lambda: job.drain_messages(finalize_if_empty=True),
             cancel_signal=job.cancel_event,
             execution_lease_fd=lease.fileno(),
+            progress_reporter=job.report,
         )
     except MutationOutcomeError as error:
         status = "cancelled" if isinstance(error, AgentLoopCancelled) else "failed"
-        return _JobOutcome(status, None, str(error), True)
+        return _JobOutcome(status, None, str(error), True, getattr(error, 'telemetry', None))
     except AgentLoopCancelled as error:
-        return _JobOutcome("cancelled", None, str(error))
+        return _JobOutcome("cancelled", None, str(error), telemetry=getattr(error, 'telemetry', None))
     except AgentLoopError as error:
-        return _JobOutcome("failed", None, str(error))
-    except Exception:
-        logger.error("DeepSeek background job failed category=internal")
-        return _JobOutcome("failed", None, "unexpected internal failure")
-    return _JobOutcome("completed", result, None)
+        return _JobOutcome("failed", None, str(error), telemetry=getattr(error, 'telemetry', None))
+    except Exception as error:
+        logger.exception("DeepSeek background job failed category=internal")
+        return _JobOutcome("failed", None, "unexpected internal failure", telemetry=getattr(error, 'telemetry', None))
+    return _JobOutcome("completed", result, None, telemetry=job.telemetry)
 
 
 def _apply_cancelled_outcome(job: JobRecord, outcome: _JobOutcome) -> None:
@@ -209,12 +220,14 @@ def validate_delegation_input(task: str, context: str = "") -> None:
 class DeepSeekJobManager:
     """Thread-safe manager with one shared DeepSeek execution slot."""
 
-    def __init__(self, lock_directory: Path | None = None) -> None:
+    def __init__(self, lock_directory: Path | None = None, *, runner=None, ready_check=None) -> None:
         self._lock = threading.RLock()
         self._jobs: dict[str, JobRecord] = {}
         self._active_job_id: str | None = None
         self._sync_active = False
         self._lock_directory = lock_directory
+        self._runner = runner
+        self._ready_check = ready_check
 
     def run_sync(
         self,
@@ -231,7 +244,7 @@ class DeepSeekJobManager:
             lease = self._acquire_ready_workspace_lease_locked(config)
             self._sync_active = True
         try:
-            return run_agent(
+            return (self._runner or run_agent)(
                 task,
                 config,
                 cancel_signal=cancel_signal,
@@ -242,7 +255,7 @@ class DeepSeekJobManager:
                 self._release_workspace_lease_locked(lease)
                 self._sync_active = False
 
-    def start(self, task: str, context: str, config: Config) -> dict[str, Any]:
+    def start(self, task: str, context: str, config: Config, *, progress_reporter=None) -> dict[str, Any]:
         validate_delegation_input(task, context)
 
         with self._lock:
@@ -256,6 +269,7 @@ class DeepSeekJobManager:
                 context=context,
                 task_length=len(task),
                 capability=config.delegation_capability,
+                progress_reporter=progress_reporter,
             )
             self._jobs[job_id] = job
             self._active_job_id = job_id
@@ -356,14 +370,14 @@ class DeepSeekJobManager:
     @staticmethod
     def _claim_usage_locked(job: JobRecord) -> tuple[int, dict[str, Any]] | None:
         if (
-            job.status != "completed"
-            or not job.result
+            job.status not in TERMINAL_STATES
+            or not (job.result or job.telemetry)
             or job.usage_recorded
             or job.usage_recording
         ):
             return None
         job.usage_recording = True
-        return job.task_length, job.result
+        return job.task_length, job.result or job.telemetry
 
     def _run_job(
         self,
@@ -383,7 +397,7 @@ class DeepSeekJobManager:
             job.task = ""
             job.context = ""
 
-        outcome = _run_background_agent(full_task, config, job, lease)
+        outcome = _run_background_agent(full_task, config, job, lease, self._runner)
         self._finish_job(
             job_id,
             desired_status=outcome.status,
@@ -391,6 +405,7 @@ class DeepSeekJobManager:
             error=outcome.error,
             lease=lease,
             preserve_mutation_error=outcome.preserve_mutation_error,
+            telemetry=outcome.telemetry,
         )
 
     def _finish_job(
@@ -402,10 +417,13 @@ class DeepSeekJobManager:
         error: str | None,
         lease: WorkspaceExecutionLease,
         preserve_mutation_error: bool = False,
+        telemetry: dict[str, Any] | None = None,
     ) -> None:
         """Commit one terminal state atomically with accepted cancellation."""
         with self._lock:
             job = self._get_locked(job_id)
+            if telemetry is not None:
+                job.telemetry = telemetry
             self._release_workspace_lease_locked(lease)
             cancellation_won = job.cancel_event.is_set() or desired_status == "cancelled"
             if cancellation_won:
@@ -447,6 +465,8 @@ class DeepSeekJobManager:
         lease = self._acquire_workspace_lease_locked(config)
         try:
             require_no_pending(config)
+            if self._ready_check:
+                self._ready_check(config)
         except TransactionRecoveryError as error:
             self._release_workspace_lease_locked(lease)
             raise JobError(str(error)) from None

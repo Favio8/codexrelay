@@ -33,3 +33,17 @@ tests/run_live.py requires DEEPSEEK_API_KEY in the process environment and consu
 tests/verify_thinking_compaction.py is a focused real-provider protocol check using configured credentials. It also consumes quota. Keep keys and raw sensitive provider output out of source control and Issue reports.
 
 After any coding test, review actual diffs and recovery records. Cancellation preserves changes; it is not rollback.
+
+## Usage development and backend probes (2026-10-13)
+
+The current development source passes 67 unit tests, including 12 usage-specific cases, plus the existing 12-tool local stdio MCP regression. Usage arithmetic, missing/partial data, settlement dates, frozen prices, explicit backfill and 10,001-task aggregation are covered. The latter took about 0.11–0.12 seconds on the development machine.
+
+After `npm run build`, `node tests/usage-ui.mjs` uses installed Chrome and the production frontend with actual per-request Python RPC in an isolated state directory. It checks price entry, historical backfill, signed comparison, cache reuse/invalidation and task-detail navigation at 900 × 600. This is a browser-plus-RPC integration check, not a new native Tauri or installer certification. See [implementation and limits](USAGE-MVP.md).
+
+`tests/probe_backends.py` is a separate optional B1 experiment requiring pinned candidate packages under `.tmp/backend-probe`. It uses only a local fake model endpoint. See [candidate versions, results and unverified gates](BACKEND-EVALUATION.md); these probes do not enable a second production backend.
+
+## 0.2.0 multi-backend and request/log usage
+
+The production Pi adapter now uses the bundled Agent SDK with the existing Python provider/tool boundaries. `test_pi_backend.py` covers real SDK scheduling, writes, scope, cancellation, cross-backend leases, crash recovery and Windows namespace paths. `test_usage_sources.py` covers response-event persistence and opt-in direct/cumulative log parsing, replay, truncation, cache pricing and bounded oversized-line handling. The last full regression passed 89 cases; the added namespace regression and the expanded 14-case log suite also passed (92 distinct current test cases).
+
+`tests/run_mcp.py` now checks 24 tools, both backends, legacy routing, review/transaction acknowledgement and cross-backend cancellation. `tests/native-roadmap.mjs` drives the real built Tauri application and bundled Python/Pi with isolated state and a local HTTP model. It also tests log opt-in/stop/clear, per-model prices and managed-rule upgrades, with system-only PATH for the application. Fixtures stay under `.tmp/roadmap-native-*` for inspection. See [acceptance mapping and remaining environment checks](ROADMAP-0.2.0.md).

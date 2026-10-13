@@ -21,8 +21,12 @@ def main():
                     service.delete_provider(provider["id"])
                 with service.store.connect() as db:
                     db.execute("DELETE FROM tasks")
+                    db.execute("DELETE FROM usage_events")
                     db.execute("DELETE FROM projects")
                     db.execute("DELETE FROM instances")
+                    db.execute("DELETE FROM settings WHERE key IN ('codex_usage','usage_prices','active_backend','usage_revision')")
+                from .codex_usage import clear
+                clear(service.store)
                 for backup in (service.store.directory / "backups").glob("*.dpapi"):
                     backup.unlink()
             print("CodexRelay integration removed; user project files preserved.")

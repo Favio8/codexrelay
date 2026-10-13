@@ -22,6 +22,13 @@ RULES = BEGIN + """
 
 Use the codexrelay MCP for self-contained, execution-heavy tasks when available.
 Before delegation, call ping and verify its workspace matches the actual project.
+Use start_agent/delegate_to_agent (or their readonly variants) for the selected
+backend. Legacy DeepSeek-named start/delegate tools always use the original engine.
+Use get_task_status/get_task_result, send_task_message, cancel_task and
+record_task_verification for task control. After coding, call get_task_recovery:
+verify exact transaction IDs before acknowledge_task_mutations; separately inspect
+workspace checks and their current hashes before acknowledge_workspace_review.
+Switching backend does not remove pending checks. Never treat completed as verified.
 Use readonly for pure Read/Glob/Grep analysis, coding for commands or mutations.
 Pass the complete goal, absolute workspace, constraints and acceptance criteria.
 Keep planning, architecture, ambiguous debugging and final verification in Codex.
@@ -251,11 +258,10 @@ def uninstall(store, codex_home=None):
         if any(t["status"] in {"queued", "running", "cancelling"} for t in store.snapshot()["tasks"]):
             raise ValueError("已禁止新委托；请等待或停止当前任务后再解除接入")
         # Recovery remains owned by the host; never acknowledge on its behalf.
-        from deepseek_mcp.config import Config
-        from deepseek_mcp.transaction_recovery import query_with_lease
+        from .backends import ensure_removable
         for project in store.snapshot()["projects"]:
-            if Path(project["path"]).is_dir() and query_with_lease(Config(api_key="", workspace=Path(project["path"]), allowed_tools=[])):
-                raise ValueError("仍有待核验修改，请先在 Codex 中完成恢复检查")
+            if Path(project["path"]).is_dir():
+                ensure_removable(project["path"])
         config_path, rules_path = directory / "config.toml", directory / "AGENTS.md"
         before_config, before_rules = read(config_path), read(rules_path)
         config = tomlkit.parse(decode(before_config))
@@ -286,7 +292,7 @@ def uninstall(store, codex_home=None):
 
 
 def dispatch(store, method, params):
-    action = {"integration_status": status, "integration_preview": preview, "integration_install": install, "integration_uninstall": uninstall}.get(method)
+    action = {"integration_status": status, "integration_preview": preview, "integration_install": install, "integration_refresh": install, "integration_uninstall": uninstall}.get(method)
     if not action:
         raise ValueError("未知接入操作")
     return action(store, **params)

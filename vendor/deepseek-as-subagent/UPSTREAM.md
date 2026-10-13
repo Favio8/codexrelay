@@ -20,3 +20,12 @@ No path boundary, command isolation, mutation journal, acknowledgement or execut
 ## CodexRelay 0.1.2 patches
 
 Thinking-mode compaction preserves every original assistant message including full opaque `reasoning_content`, tool IDs and arguments. Only older tool outputs are shortened; no synthetic assistant archive is added in thinking mode. Provider errors referring to a missing reasoning-history field receive a safe diagnostic category without returning raw provider text.
+
+## CodexRelay 0.2.0 patches
+
+- `provider_response.py` retains optional cache-hit/cache-write counters without adding reasoning tokens twice.
+- `agent_loop.py` emits per-response usage events before budget termination, cumulative cache coverage and an optional workspace-review reference.
+- `job_manager.py` accepts an injected runner, a leased readiness check and a synchronous telemetry observer. Defaults preserve standalone upstream execution. This lets the Pi scheduler reuse the same task ownership, cancellation and mutation evidence contracts.
+- CodexRelay's Pi adapter calls the pinned engine's controlled provider/tool helpers. These are intentional version-bound integration points and must be regression-tested before changing the upstream snapshot.
+
+The earlier 0.1.4 execution-reliability changes are documented in `docs/EXECUTION-RELIABILITY-FIX.md` at the repository root. No existing file-scope, command cleanup, journal acknowledgement or lease checks are removed.
