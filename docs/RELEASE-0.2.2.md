@@ -1,6 +1,6 @@
 # 0.2.2 升级与单实例修复
 
-日期：2026-10-13（Asia/Shanghai）。本地 Windows 维护版本。
+日期：2026-10-13（Asia/Shanghai）。[GitHub v0.2.2 Windows Beta](https://github.com/Favio8/codexrelay/releases/tag/v0.2.2) 提供安装包、SHA256SUMS.txt 和许可附件。
 
 ## 行为
 
