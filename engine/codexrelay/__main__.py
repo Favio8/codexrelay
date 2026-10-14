@@ -36,7 +36,7 @@ def main():
         service = Service()
         try:
             snapshot = service.store.snapshot()
-            if any(t["status"] in {"queued", "running", "cancelling"} for t in snapshot["tasks"]):
+            if any(t["status"] in {"queued", "running", "cancelling", "compacting", "wrapping_up"} for t in snapshot["tasks"]):
                 raise ValueError("请先结束正在执行的子代理任务")
             if sys.argv[1] == "check-idle":
                 return

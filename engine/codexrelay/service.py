@@ -17,6 +17,11 @@ def validate_provider(values):
         if not value or len(value) > 500:
             raise ValueError("请填写有效的 " + key)
         result[key] = value
+    for key in ('flash_context_window', 'pro_context_window'):
+        value = values.get(key)
+        if value is not None and (isinstance(value, bool) or not isinstance(value, int) or not 4096 <= value <= 2000000):
+            raise ValueError(key + ' 必须为空或 4096 至 2000000 的整数')
+        result[key] = value
     address = urlsplit(result["base_url"])
     local = address.hostname in {"localhost", "127.0.0.1", "::1"}
     if address.scheme != "https" and not (local and address.scheme == "http"):
@@ -129,7 +134,7 @@ class Service:
         return {"version": __version__, "state_directory": str(self.store.directory),
                 "runtime": {name: importlib.metadata.version(name) for name in ("mcp", "openai", "tomlkit")},
                 "enabled": snapshot["enabled"], "providers": snapshot["providers"],
-                "active_tasks": [t["id"] for t in snapshot["tasks"] if t["status"] in {"queued", "running", "cancelling"}],
+                "active_tasks": [t["id"] for t in snapshot["tasks"] if t["status"] in {"queued", "running", "cancelling", "compacting", "wrapping_up"}],
                 "connections": snapshot["instances"], "integration": status(self.store)}
 
     def test_backend(self, backend, provider_id, slot='flash'):
@@ -160,6 +165,11 @@ class Service:
         return status
 
     def dispatch(self, method, params):
+        if method in {'set_execution_defaults', 'extend_task_authorization', 'get_task_group', 'get_task_checkpoint'}:
+            from . import task_groups
+            action = {'set_execution_defaults': task_groups.set_defaults, 'extend_task_authorization': task_groups.extend,
+                      'get_task_group': task_groups.get, 'get_task_checkpoint': task_groups.read_checkpoint}[method]
+            return action(self.store, **params)
         if method == 'test_backend':
             return self.test_backend(**params)
         if method == 'usage_requests_today':

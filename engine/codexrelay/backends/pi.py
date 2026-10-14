@@ -17,11 +17,13 @@ from . import review
 # forking the loop. Those helpers are private, so an upstream snapshot swap fails at runtime
 # with an opaque task error unless the bindings are checked explicitly.
 REQUIRED_LOOP_SYMBOLS = ('_create_agent_state', '_AgentControls', '_check_cancel', '_remaining_seconds',
+                         '_execution_request', '_provider_request',
                          '_compact_history', '_enforce_history_budget', '_encoded_size', '_ensure_request_budget',
                          '_ensure_token_budget_available', '_raise_max_turns', '_validate_tool_batch',
                          '_execute_and_record_tool', '_raise_with_mutation_records', '_build_result',
                          '_call_with_retry', '_record_response', '_publish_telemetry', '_build_telemetry')
 REQUIRED_STATE_FIELDS = ('messages', 'tools', 'turns_used', 'applied_steering_messages', 'progress_reporter',
+                         'pi_context_messages',
                          'workspace_before', 'workspace_review', 'deadline', 'request_in_flight', 'mutations')
 
 
@@ -133,7 +135,7 @@ def run_pi(task, config, *, control_poll=None, control_finalize=None, cancel_sig
         def send(value):
             process.stdin.write(json.dumps(value,ensure_ascii=False)+'\n')
             process.stdin.flush()
-        send({'op':'start','system':state.messages[0]['content'],'task':task,'tools':state.tools,'model':config.model})
+        send({'op':'start','system':state.messages[0]['content'],'task':task,'tools':state.tools,'model':config.model,'context_window':config.context_window,'max_output_tokens':config.max_output_tokens})
         pending_steers = []
         while True:
             loop._check_cancel(cancel_signal)
@@ -155,21 +157,15 @@ def run_pi(task, config, *, control_poll=None, control_finalize=None, cancel_sig
                     loop._raise_max_turns(state)
                 loop._ensure_token_budget_available(state)
                 state.turns_used += 1
+                state.pi_context_messages.append(len(event['messages']))
                 state.messages = [state.messages[0], *event['messages']]
-                loop._compact_history(state)
-                loop._enforce_history_budget(state.messages)
-                size = loop._encoded_size({'messages':state.messages,'tools':state.tools},ensure_ascii=False)
-                allowance = loop._ensure_request_budget(state,size)
-                state.request_in_flight = True
-                loop._publish_telemetry(state,loop._build_telemetry(state))
-                response = loop._call_with_retry(replace(config,max_output_tokens=allowance),state.messages,state.tools,
-                    state.turns_used-1,cancel_signal=cancel_signal,deadline=state.deadline)
-                state.request_in_flight = False
-                loop._record_response(state,response,size)
+                from deepseek_mcp.execution_context import prepare
+                size, allowance = prepare(state)
+                response = loop._execution_request(state, state.turns_used-1, allowance)
                 raw = response.raw['choices'][0]['message']
                 if response.choices[0].message.tool_calls:
                     loop._validate_tool_batch(state,response.choices[0].message.tool_calls)
-                send({'id':event['id'],'message':raw})
+                send({'id':event['id'],'message':raw, 'context': state.messages[:-1], 'epoch': state.context_epoch})
             elif operation == 'tool':
                 tool = ProviderToolCall(event['tool_id'],ProviderFunction(event['name'],json.dumps(event['args'])))
                 loop._execute_and_record_tool(state,tool,state.turns_used-1)

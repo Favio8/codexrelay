@@ -60,7 +60,7 @@ class ProviderResponse:
     choices: list[ProviderChoice]
 
     @classmethod
-    def from_payload(cls, payload: object) -> "ProviderResponse":
+    def from_payload(cls, payload: object, *, allow_incomplete: bool = False) -> "ProviderResponse":
         if not isinstance(payload, dict):
             raise ProviderResponseError("provider response must be an object")
         choices = payload.get("choices")
@@ -74,7 +74,7 @@ class ProviderResponse:
                 "provider inference resources were insufficient"
             )
         message = _message(first["message"])
-        finish_reason = _finish_reason(first.get("finish_reason"), message)
+        finish_reason = first.get('finish_reason') if allow_incomplete and first.get('finish_reason') in {'length', 'content_filter'} else _finish_reason(first.get("finish_reason"), message)
         return cls(copy.deepcopy(payload), _usage(payload.get("usage")), [
             ProviderChoice(message, finish_reason)
         ])

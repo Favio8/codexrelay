@@ -7,8 +7,8 @@ from collections import Counter
 from datetime import datetime, time as day_time, timedelta
 from decimal import Decimal, InvalidOperation
 
-TERMINAL = {'completed', 'failed', 'cancelled', 'interrupted'}
-ACTIVE = {'queued', 'running', 'cancelling'}
+TERMINAL = {'completed', 'failed', 'cancelled', 'interrupted', 'budget_stopped', 'no_progress'}
+ACTIVE = {'queued', 'running', 'cancelling', 'compacting', 'wrapping_up'}
 MILLION = Decimal(1_000_000)
 
 

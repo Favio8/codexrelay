@@ -30,3 +30,9 @@ Thinking-mode history compaction preserves original assistant messages, tool cal
 Task-settlement usage reporting aggregates all retained tasks, including known usage from failures and cancellations. Provider/model prices are versioned and frozen at admission; historical backfill is explicit. Separate idempotent response events support request-day reporting and cache counters. Estimates use Decimal and distinguish missing usage, unknown caching and unpriced records. A frontend cache uses the shared usage revision and local day; aggregation does not enter snapshot polling.
 
 Codex log import is a separate, default-off feature. It incrementally stores counters and cursors, never message bodies, and does not proxy main-model traffic. Pi scheduling uses a credential-free Node SDK process; all model requests and workspace tools return to the Python control boundary. Both backends share admission, workspace leases, transaction recovery and independent verification. Pi coding also persists observed-workspace checks. See [0.2.0 implementation and verified scope](ROADMAP-0.2.0.md).
+
+## 0.3.0 execution contracts
+
+TaskGroup identity, independent Run budgets, parent verification and App grants are persistent. Both schedulers share pre-request control and provider usage, including summaries and retries. Pi prepareRequest replaces scheduler state at complete exchanges. SQLite schema 4 separates lightweight task metadata from results, checkpoint bodies, tool evidence and sealed context archives; snapshots do not load those bodies. See [contracts and migration](EXECUTION-OPTIMIZATION.md).
+
+The 0.3.1 patch shares adaptive long-line previews and target-first inspection across both schedulers. A real Grep match supplies the text for exact Edit; a broad Read is not mandatory. Budget feedback considers the cost of subsequent input history while the hard limit and usage history stay unchanged. No new schema or SDK dependency is required.

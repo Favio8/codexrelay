@@ -47,6 +47,9 @@ def _error_summary(error: APIError) -> tuple[str, bool]:
     if isinstance(body, dict) and isinstance(body.get("error"), dict):
         body = body["error"]
     code = body.get("code") if isinstance(body, dict) else None
+    if status in {400, 413} and (code in {'context_length_exceeded', 'context_window_exceeded'} or
+            isinstance(body, dict) and any(value in str(body.get('message', '')).lower() for value in ('context length', 'context window', 'maximum context'))):
+        return f'category=context_length{suffix}', False
     if status == 400 and isinstance(body, dict) and "reasoning_content" in str(body.get("message", "")):
         return "category=reasoning_history status=400", False
     if status == 402 or code in {"insufficient_quota", "insufficient_balance", "balance_insufficient", "billing_hard_limit_reached"}:

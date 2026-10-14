@@ -5,13 +5,15 @@
 
 **让 Codex 调用 DeepSeek，把子代理交给一个开关管理。**
 
-[![Release](https://img.shields.io/github/v/release/Favio8/codexrelay?include_prereleases&color=33795a)](https://github.com/Favio8/codexrelay/releases/tag/v0.2.2)
-[![Windows](https://img.shields.io/badge/Windows-x64-0078D4)](https://github.com/Favio8/codexrelay/releases/tag/v0.2.2)
+[![Release](https://img.shields.io/github/v/release/Favio8/codexrelay?include_prereleases&color=33795a)](https://github.com/Favio8/codexrelay/releases/tag/v0.3.1)
+[![Windows](https://img.shields.io/badge/Windows-x64-0078D4)](https://github.com/Favio8/codexrelay/releases/tag/v0.3.1)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![CI](https://github.com/Favio8/codexrelay/actions/workflows/ci.yml/badge.svg)](https://github.com/Favio8/codexrelay/actions/workflows/ci.yml)
 
-简体中文 · [English](README_EN.md) · [下载安装](https://github.com/Favio8/codexrelay/releases/tag/v0.2.2) · [反馈问题](https://github.com/Favio8/codexrelay/issues)
+简体中文 · [English](README_EN.md) · [下载安装](https://github.com/Favio8/codexrelay/releases/tag/v0.3.1) · [反馈问题](https://github.com/Favio8/codexrelay/issues)
 </div>
+
+**0.3.1 Windows Beta** 已加入核验后续作、持久化 checkpoint 和 App 单任务授权，并修复大单行文件在低预算下读取过多的问题。见 [使用说明](docs/EXECUTION-OPTIMIZATION.md)、[发布记录](docs/RELEASE-0.3.1.md) 与 [逐项验收](docs/EXECUTION-ACCEPTANCE.md)。
 
 ## 为什么做 CodexRelay？
 
@@ -27,11 +29,11 @@ Codex 负责规划、判断和验收；DeepSeek 或 OpenAI 兼容模型可以执
 
 ## 下载与安装
 
-**[下载 Windows x64 安装包（v0.2.2 Beta）](https://github.com/Favio8/codexrelay/releases/download/v0.2.2/CodexRelay_0.2.2_x64-setup.exe)**
+**[下载 Windows x64 安装包（v0.3.1 Beta）](https://github.com/Favio8/codexrelay/releases/download/v0.3.1/CodexRelay_0.3.1_x64-setup.exe)**
 
-[Release 说明与 SHA256 校验文件](https://github.com/Favio8/codexrelay/releases/tag/v0.2.2)
+[Release 说明与 SHA256 校验文件](https://github.com/Favio8/codexrelay/releases/tag/v0.3.1)
 
-当前发布版本为 **0.2.2 Beta**，修复升级后新旧版本共存、管理窗口重复启动和启动报错，并精简设置界面。升级后请重启 Codex；详细修复与验证见 [0.2.2 交付记录](docs/RELEASE-0.2.2.md)。
+当前发布版本为 **0.3.1 Beta**，原引擎与 Pi 均支持独立轮次预算、上下文摘要、持久化 checkpoint 和 Codex 核验后的剩余工作续作。0.2.2 的单实例和原目录升级修复保留。升级后在「设置与诊断」更新托管规则并重启 Codex，以加载新增工具；详细功能与验证见 [0.3.1 发布记录](docs/RELEASE-0.3.1.md)。
 
 - 当前优先支持 Windows；已在 Windows 11 x64 验证。界面为简体中文。
 - 需要已有 Codex Desktop；同一 MCP 接入可用于 Codex CLI。
@@ -69,6 +71,9 @@ Codex 负责规划、判断和验收；DeepSeek 或 OpenAI 兼容模型可以执
 | 全局开关 | 关闭后立即禁止新委托，正在执行的任务继续完成 |
 | 项目开关 | 个别工作区可单独禁用，优先于全局开启 |
 | 任务与停止 | 查看状态、工具记录和错误；可单独停止任务 |
+| 核验后续作 | 每轮独立预算；默认允许 3 次续作，由 Codex 核验实际成果后只委派剩余事项 |
+| 执行设置与授权 | 调整新任务默认次数；为当前任务追加次数或设置后续预算 |
+| 上下文与证据 | 有界读取、结构化摘要、合法上下文重建；checkpoint 保留实际工具证据和恢复引用 |
 | 托盘 | 关闭窗口收起到托盘，随时查看状态和切换总开关 |
 | 接入与迁移 | 管理本软件的 MCP 注册；导入已有 DeepSeek 接入 |
 | 诊断与恢复 | 区分认证、额度、限流、本地预算及模型历史错误；保留部分修改供核验 |
@@ -83,9 +88,9 @@ Codex 保留规划与最终验收职责。停止任务保留已经产生的修�
 
 ### 预算与额度
 
-每家供应商可设置单次任务累计 Token 预算，默认 1,000,000。累计值包含多轮输入、输出和重复发送的历史，供应商未返回用量时使用估算。它是本地任务限制，不代表 API 账户余额或费用。
+每家供应商可设置单轮累计 Token 预算，默认 1,000,000。每个 Run 累计执行、摘要、重试的输入和输出，包含重复发送的历史；供应商未返回用量时使用估算。任务组默认初始执行加至多 3 次续作，每轮独立预算，组历史消耗和已用次数持续保留。它是本地任务限制，不代表 API 账户余额或费用。
 
-历史过长时自动压缩较早的工具输出。DeepSeek 思考模式保留原始 assistant 消息、工具调用和 `reasoning_content`，避免压缩导致 API 400。关闭总开关不会中断已有任务，立即停止需在任务页操作。
+历史过长时压缩较早的工具输出或生成结构化进度索引，在完整工具交换处重建合法上下文。思考字段和工具协议保持合法，压缩不会清零已用预算。官方 DeepSeek 摘要使用同一模型普通模式，执行保持所选思考配置。关闭总开关会阻止新委派和续作；立即停止当前执行需在任务页操作。
 
 ## 常见问题
 
@@ -111,7 +116,7 @@ Key 在 Windows Credential Manager；配置、任务历史和恢复记录默认�
 
 **停止任务后怎么办？**
 
-检查实际文件差异和测试结果；按恢复记录核验已经产生的修改，再由 Codex 接手剩余工作。
+由 Codex 检查实际文件差异、测试和恢复记录；核验后仅续作剩余事项，或由 Codex 接手完成。到达次数或预算授权限制时，可在 App 的任务详情追加授权。摘要和执行代理的完成声明不能代替验收。
 
 ## 开发与贡献
 
@@ -125,7 +130,7 @@ npm run desktop:dev
 
 [开发与构建](docs/DEVELOPMENT.md) · [架构](docs/ARCHITECTURE.md) · [测试与已验证范围](docs/TESTING.md) · [贡献指南](CONTRIBUTING.md)
 
-当前公开发布版 **0.2.2 Beta** 已包含 Pi Agent SDK 后端、委托用量/费用估算、逐响应缓存计量，以及默认关闭的 Codex 日志用量对照。详见 [0.2.0 功能与验收记录](docs/ROADMAP-0.2.0.md)。自动更新与多代理并发仍不包含在本版本。
+当前公开发布版 **0.3.1 Beta** 包含 Pi Agent SDK 后端、委托用量/费用估算、逐响应缓存计量、默认关闭的 Codex 日志用量对照，以及核验后续作与单任务授权。详见 [54 项验收记录](docs/EXECUTION-ACCEPTANCE.md)。自动更新与多代理并发仍不包含在本版本。
 
 ## 致谢与许可
 

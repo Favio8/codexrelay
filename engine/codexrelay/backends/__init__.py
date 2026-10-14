@@ -63,4 +63,6 @@ def build_config(provider, mode, slot, workspace, credential):
                   reasoning_effort=provider.get("pro_reasoning_effort", provider["reasoning_effort"]) if slot == "pro" else provider["reasoning_effort"],
                   flash_reasoning_effort=provider["reasoning_effort"], pro_reasoning_effort=provider.get("pro_reasoning_effort", provider["reasoning_effort"]),
                   max_total_tokens=provider.get("max_total_tokens", 1_000_000), max_output_tokens=provider.get("max_output_tokens", 16384),
-                  max_turns=provider.get("max_turns", 50), max_run_seconds=provider.get("max_run_seconds", 18000))
+                  context_window=provider.get(slot + "_context_window"), max_turns=provider.get("max_turns", 50), max_run_seconds=provider.get("max_run_seconds", 18000))
+
+HOST_INSTRUCTIONS += '\nUse create_task_group, get_task_checkpoint and record_task_verification for each ended run. Resume only verified remaining_items with resume_agent in the same group and current checkpoint ID/hash. Default is 3 continuations, 4 runs. Do not reset groups to bypass limits or routinely override provider budgets with lower token_budget. Only App grants budget/round extensions. Summary is an index, not proof; inspect actual files, commands and exact recovery records.'

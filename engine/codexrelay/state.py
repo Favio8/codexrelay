@@ -14,7 +14,10 @@ def home():
 
 
 def canonical(path):
-    return os.path.normcase(str(Path(path).resolve(strict=True)))
+    value = str(Path(path).resolve(strict=True))
+    if value.startswith('\\\\?\\UNC\\'): value = '\\\\' + value[8:]
+    elif value.startswith('\\\\?\\'): value = value[4:]
+    return os.path.normcase(value)
 
 
 def process_identity(pid):
@@ -44,7 +47,7 @@ def process_identity(pid):
 
 
 class Store:
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = 4
 
     def __init__(self, directory=None):
         self.directory = Path(directory) if directory else home()
@@ -68,8 +71,33 @@ class Store:
                 CREATE INDEX IF NOT EXISTS usage_events_date ON usage_events(occurred_at);
                 INSERT OR IGNORE INTO settings VALUES ('enabled','false');
                 INSERT OR IGNORE INTO settings VALUES ('active_provider_id','null');
-                PRAGMA user_version=1;
+                CREATE TABLE IF NOT EXISTS task_groups (id TEXT PRIMARY KEY, payload TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS group_runs (group_id TEXT NOT NULL, run_id TEXT PRIMARY KEY);
+                CREATE TABLE IF NOT EXISTS checkpoints (id TEXT PRIMARY KEY, run_id TEXT NOT NULL, metadata TEXT NOT NULL, body TEXT NOT NULL);
+                CREATE INDEX IF NOT EXISTS checkpoints_run ON checkpoints(run_id);
+                CREATE TABLE IF NOT EXISTS continuations (group_id TEXT NOT NULL, key TEXT NOT NULL, request_sha256 TEXT NOT NULL, run_id TEXT NOT NULL, PRIMARY KEY(group_id,key));
+                CREATE TABLE IF NOT EXISTS execution_evidence (run_id TEXT NOT NULL, sequence INTEGER NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(run_id,sequence));
+                CREATE TABLE IF NOT EXISTS task_bodies (run_id TEXT PRIMARY KEY, body TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS context_archives (run_id TEXT NOT NULL, epoch INTEGER NOT NULL, sha256 TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(run_id,epoch));
+                PRAGMA user_version=4;
             """)
+            # Move old full results without changing their execution/verification semantics.
+            # Counters remain in the lightweight row for existing usage aggregation.
+            for row in db.execute('SELECT id,payload FROM tasks').fetchall():
+                try: record = json.loads(row[1])
+                except (ValueError, TypeError): continue
+                result = record.get('result') if isinstance(record, dict) else None
+                if result is None or db.execute('SELECT 1 FROM task_bodies WHERE run_id=?', (row[0],)).fetchone(): continue
+                db.execute('INSERT INTO task_bodies VALUES (?,?)', (row[0], json.dumps(result, ensure_ascii=False)))
+                record['result'] = {'tokens': result['tokens']} if isinstance(result, dict) and 'tokens' in result else None
+                db.execute('UPDATE tasks SET payload=? WHERE id=?', (json.dumps(record, ensure_ascii=False), row[0]))
+            # Alias spellings must not bypass a saved project disable policy.
+            for row in db.execute('SELECT path,disabled FROM projects').fetchall():
+                try: normalized = canonical(row[0])
+                except OSError: continue
+                if normalized != row[0]:
+                    db.execute('INSERT INTO projects VALUES (?,?) ON CONFLICT(path) DO UPDATE SET disabled=MAX(disabled,excluded.disabled)', (normalized, row[1]))
+                    db.execute('DELETE FROM projects WHERE path=?', (row[0],))
 
     @contextlib.contextmanager
     def connect(self):
@@ -153,6 +181,25 @@ class Store:
                     db.execute('DELETE FROM tasks WHERE id=?', (row['id'],))
                     continue
                 task.update(status="interrupted", finished_at=time.time(), error="引擎已退出；请检查工作区修改后继续。")
+                telemetry = task.get('telemetry') or {}
+                request = telemetry.get('request') or {}
+                if request.get('in_flight'):
+                    estimate = request.get('input_estimate', 0)
+                    estimate = estimate if isinstance(estimate, int) and not isinstance(estimate, bool) and estimate >= 0 else 0
+                    tokens = telemetry.setdefault('tokens', {})
+                    tokens.update(interrupted_request=True, responses_without_usage=tokens.get('responses_without_usage', 0) + 1)
+                    budget = telemetry.setdefault('budget', {})
+                    budget['metered_tokens'] = budget.get('metered_tokens', 0) + estimate
+                    events = telemetry.setdefault('usage_events', [])
+                    sequence = max([event.get('sequence', 0) for event in events if isinstance(event, dict)] or [0]) + 1
+                    event = dict(sequence=sequence, occurred_at=time.time(), request_kind=request.get('kind', 'execution'),
+                                 available=False, prompt=None, completion=None, input_estimate=estimate, gap='engine_disconnected')
+                    events.append(event)
+                    db.execute('INSERT OR IGNORE INTO usage_events VALUES (?,?,?,?)', (task['id'], sequence, event['occurred_at'], json.dumps(event)))
+                    request['in_flight'] = False
+                    task['telemetry'] = telemetry
+                from .task_groups import checkpoint
+                checkpoint(db, task)
                 db.execute("UPDATE tasks SET payload=?,active=0 WHERE id=?", (json.dumps(task), row["id"]))
                 from .usage import bump_revision
                 bump_revision(db)
@@ -182,13 +229,21 @@ class Store:
             with self.connect() as db:
                 db.execute('DELETE FROM tasks WHERE id=?', (identifier,))
 
-    def admit(self, title, workspace, mode, model_slot, expected_provider=None, backend='deepseek', expected_backend=None, backend_capabilities=None):
+    def admit(self, title, workspace, mode, model_slot, expected_provider=None, backend='deepseek', expected_backend=None, backend_capabilities=None,
+              group_id=None, run_details=None, continuation=None):
         workspace = canonical(workspace)
         if model_slot not in {"flash", "pro"} or mode not in {"coding", "readonly"}:
             raise ValueError("不支持的执行模式或模型档位")
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             self._reap(db)
+            from . import task_groups as groups
+            details = run_details or {}
+            if continuation:
+                prior = db.execute('SELECT request_sha256,run_id FROM continuations WHERE group_id=? AND key=?', (group_id, continuation['idempotency_key'])).fetchone()
+                if prior:
+                    if prior[0] != continuation['request_sha256']: raise ValueError('idempotency key conflict')
+                    return {**json.loads(db.execute('SELECT payload FROM tasks WHERE id=?', (prior[1],)).fetchone()[0]), 'idempotent_replay': True}
             settings = {r[0]: json.loads(r[1]) for r in db.execute("SELECT key,value FROM settings")}
             if not settings["enabled"]:
                 raise ValueError("DELEGATION_DISABLED: 新委托已关闭，请由 Codex 继续完成任务。")
@@ -205,6 +260,26 @@ class Store:
                 raise ValueError("供应商配置已变化，请重新提交任务")
             if expected_backend is not None and settings.get('active_backend','deepseek') != expected_backend:
                 raise ValueError('执行后端已变化，请重新提交任务')
+            group = groups.load(db, group_id) if group_id else groups.create(db, workspace, title, details.get('task_kind', 'implementation' if mode == 'coding' else 'analysis'), mode,
+                details.get('task_root'), details.get('write_paths'), details.get('context', ''), details.get('acceptance', ''))
+            if group['workspace'] != workspace: raise ValueError('group belongs to another workspace')
+            if continuation:
+                if group['status'] == 'cancelled' and not continuation.get('manual_resume'): raise ValueError('TASK_GROUP_CANCELLED')
+                if group['used_continuations'] >= group['max_auto_continuations']: raise ValueError('AUTHORIZATION_REQUIRED: continuation limit reached')
+                previous = json.loads(db.execute('SELECT payload FROM tasks WHERE id=?', (group['latest_run_id'],)).fetchone()[0])
+                if previous['status'] in groups.ACTIVE: raise ValueError('previous run has not exited')
+                verification = group.get('verification_head') or {}
+                if verification.get('id') != continuation['verification_id'] or verification.get('disposition') != 'verified_partial': raise ValueError('valid partial verification required')
+                if verification.get('checkpoint_id') != continuation['checkpoint_id'] or verification.get('checkpoint_sha256') != continuation['checkpoint_sha256']: raise ValueError('CHECKPOINT_VERSION_STALE')
+                if (previous.get('failure') or {}).get('code') in {'provider_auth', 'provider_quota'} and previous.get('provider_revision') == provider.get('revision'): raise ValueError('PROVIDER_CONFIGURATION_REQUIRED: do not repeat authentication/quota failure')
+                if title != '\n'.join(verification['remaining_items']): raise ValueError('remaining_task must match independently verified remaining_items')
+                row = db.execute('SELECT body FROM checkpoints WHERE id=?', (continuation['checkpoint_id'],)).fetchone()
+                changed = groups.stale_files(json.loads(row[0]))
+                changed += groups.stale_files({'files': verification.get('evidence_files', {})})
+                if changed: raise ValueError('EVIDENCE_STALE: ' + json.dumps(changed))
+                group['used_continuations'] += 1
+            elif group['latest_run_id']:
+                raise ValueError('existing group requires resume_agent; do not reset continuation counts')
             identifier = uuid.uuid4().hex
             from .usage import price_snapshot, bump_revision
             from . import __version__
@@ -218,6 +293,15 @@ class Store:
                         status="queued", created_at=time.time(), started_at=None, finished_at=None,
                         cancel_requested=False, pid=os.getpid(), process_identity=process_identity(os.getpid()),
                         result=None, error=None)
+            task.update(details, group_id=group['group_id'], round_index=len(group['run_ids']) + 1,
+                        continuation_of=group['latest_run_id'], task_input=title,
+                        execution_policy=group['policy_snapshot'])
+            group['run_ids'].append(identifier)
+            group.update(latest_run_id=identifier, status='executing', version=group['version'] + 1)
+            groups.save(db, group)
+            db.execute('INSERT INTO group_runs VALUES (?,?)', (group['group_id'], identifier))
+            if continuation:
+                db.execute('INSERT INTO continuations VALUES (?,?,?,?)', (group['group_id'], continuation['idempotency_key'], continuation['request_sha256'], identifier))
             db.execute("INSERT INTO tasks VALUES (?,?,1)", (identifier, json.dumps(task)))
             bump_revision(db)
             db.execute("INSERT OR IGNORE INTO projects VALUES (?,0)", (workspace,))
@@ -231,6 +315,12 @@ class Store:
                 raise ValueError("找不到任务")
             task = json.loads(row[0])
             task.update(updates)
+            archive = (task.get('telemetry') or {}).pop('context_archive_payload', None)
+            if archive:
+                from .task_groups import digest
+                sha = digest(archive['messages'])
+                db.execute('INSERT OR REPLACE INTO context_archives VALUES (?,?,?,?)', (identifier, archive['epoch'], sha, json.dumps(archive['messages'], ensure_ascii=False)))
+                task['context_archive_ref'] = {'epoch': archive['epoch'], 'sha256': sha}
             telemetry = updates.get('telemetry') or {}
             from .usage import valid_timestamp
             for event in telemetry.get('usage_events', []):
@@ -247,19 +337,32 @@ class Store:
                 if added:
                     from .usage import bump_revision
                     bump_revision(db)
-            active = task["status"] in {"queued", "running", "cancelling"}
+            from .task_groups import checkpoint, ACTIVE
+            checkpoint(db, task)
+            result = task.get('result')
+            if result is not None:
+                if isinstance(result, dict): result.pop('context_archive_payload', None)
+                db.execute('INSERT OR REPLACE INTO task_bodies VALUES (?,?)', (identifier, json.dumps(result, ensure_ascii=False)))
+                task['result'] = {'tokens': result['tokens']} if isinstance(result, dict) and 'tokens' in result else None
+            progress = (task.get('telemetry') or {}).get('progress')
+            if progress:
+                task['telemetry']['progress'] = {k: v for k, v in progress.items() if k not in {'tool_evidence', 'summary', 'context_events'}}
+            active = task["status"] in ACTIVE
             db.execute("UPDATE tasks SET payload=?,active=? WHERE id=?", (json.dumps(task, ensure_ascii=False), int(active), identifier))
             if not active:
                 from .usage import bump_revision
                 bump_revision(db)
-            return task
+            return {**task, 'result': result} if result is not None else task
 
     def task(self, identifier):
         with self.connect() as db:
             row = db.execute("SELECT payload FROM tasks WHERE id=?", (identifier,)).fetchone()
             if not row:
                 raise ValueError("找不到任务")
-            return json.loads(row[0])
+            task = json.loads(row[0])
+            body = db.execute('SELECT body FROM task_bodies WHERE run_id=?', (identifier,)).fetchone()
+            if body: task['result'] = json.loads(body[0])
+            return task
 
     def cancel(self, identifier):
         with self.connect() as db:
@@ -271,6 +374,11 @@ class Store:
             if row[1]:
                 task.update(cancel_requested=True, status="cancelling")
                 db.execute("UPDATE tasks SET payload=? WHERE id=?", (json.dumps(task), identifier))
+                if task.get('group_id'):
+                    from .task_groups import load, save
+                    group = load(db, task['group_id'])
+                    group.update(status='cancelled', version=group['version'] + 1)
+                    save(db, group)
             return task
 
     def snapshot(self):
@@ -288,6 +396,14 @@ class Store:
             result["providers"] = [json.loads(r[0]) for r in db.execute("SELECT payload FROM providers")]
             result["projects"] = [dict(path=r[0], disabled=bool(r[1])) for r in db.execute("SELECT path,disabled FROM projects")]
             result["tasks"] = [json.loads(r[0]) for r in db.execute("SELECT payload FROM tasks ORDER BY rowid DESC LIMIT 100")]
+            from .task_groups import defaults
+            result['execution_defaults'] = defaults(db)
+            result['task_groups'] = [json.loads(r[0]) for r in db.execute('SELECT payload FROM task_groups ORDER BY rowid DESC LIMIT 100')]
+            for task in result['tasks']:
+                progress = (task.get('telemetry') or {}).get('progress')
+                if progress:
+                    task['telemetry']['progress'] = {k: v for k, v in progress.items() if k not in {'tool_evidence', 'summary', 'context_events'}}
+                task['result'] = None  # Long bodies are available through get_task only.
             result["instances"] = [json.loads(r[0]) for r in db.execute("SELECT payload FROM instances")]
             return result
 

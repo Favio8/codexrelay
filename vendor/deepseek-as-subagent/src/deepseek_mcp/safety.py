@@ -6,6 +6,7 @@ runs under the supervised trusted-host executor below the tool-child boundary.
 from __future__ import annotations
 
 import shlex
+import os
 from pathlib import Path
 
 _VCS_DIRECTORY_NAMES = frozenset({".git", ".hg", ".svn"})
@@ -21,6 +22,15 @@ _SENSITIVE_HOME_PATHS = (
 )
 
 
+def normalized_path(path: Path) -> Path:
+    """Use the same Windows namespace spelling for scope and identity comparisons."""
+    value = str(path)
+    if os.name == 'nt':
+        if value.startswith('\\\\?\\UNC\\'): value = '\\\\' + value[8:]
+        elif value.startswith('\\\\?\\') and len(value) > 6 and value[5] == ':': value = value[4:]
+    return Path(value)
+
+
 def is_vcs_control_name(name: str) -> bool:
     """Return whether one path component names VCS control state."""
     return name.casefold() in _VCS_DIRECTORY_NAMES
@@ -34,7 +44,7 @@ def is_agent_control_name(name: str) -> bool:
 def is_protected_host_path(path: Path) -> bool:
     """Keep model file tools away from host agent/config and VCS control state."""
     try:
-        candidate = path.resolve()
+        candidate = normalized_path(path.resolve())
         home = Path.home().resolve()
     except (OSError, RuntimeError):
         return True
@@ -53,7 +63,7 @@ def is_protected_host_path(path: Path) -> bool:
 def is_unsafe_workspace_root(path: Path) -> bool:
     """Reject filesystem/home roots and known credential/control roots."""
     try:
-        candidate = path.resolve(strict=True)
+        candidate = normalized_path(path.resolve(strict=True))
         home = Path.home().resolve(strict=True)
     except (OSError, RuntimeError):
         return True
@@ -156,8 +166,8 @@ def resolve_safe_path(rel_or_abs: str, workspace: Path) -> Path:
         p = Path(rel_or_abs).expanduser()
         if not p.is_absolute():
             p = workspace / p
-        abs_path = p.resolve()
-        ws_resolved = workspace.resolve()
+        abs_path = normalized_path(p.resolve())
+        ws_resolved = normalized_path(workspace.resolve())
     except (OSError, RuntimeError, ValueError):
         raise SandboxViolation("path cannot be safely resolved") from None
 

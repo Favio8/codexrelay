@@ -13,7 +13,14 @@ try {
     foreach ($taskName in @('node.exe','LICENSE')) {
         $taskEntry = $taskZip.GetEntry('node-' + $taskSpec.version + '-win-x64/' + $taskName)
         if (-not $taskEntry) { throw 'Pinned Node archive is incomplete' }
-        [IO.Compression.ZipFileExtensions]::ExtractToFile($taskEntry,(Join-Path $taskDestination $taskName),$true)
+        $taskOutput = Join-Path $taskDestination $taskName
+        $taskStream = $taskEntry.Open()
+        $taskHasher = [Security.Cryptography.SHA256]::Create()
+        try { $taskExpected = [BitConverter]::ToString($taskHasher.ComputeHash($taskStream)).Replace('-','').ToLowerInvariant() }
+        finally { $taskStream.Dispose(); $taskHasher.Dispose() }
+        # Keep identical runtime files in place, including while isolated tests use Node.
+        if ((Test-Path -LiteralPath $taskOutput) -and (Get-FileHash -LiteralPath $taskOutput -Algorithm SHA256).Hash.ToLowerInvariant() -eq $taskExpected) { continue }
+        [IO.Compression.ZipFileExtensions]::ExtractToFile($taskEntry,$taskOutput,$true)
     }
 } finally { $taskZip.Dispose() }
 Push-Location $taskRoot

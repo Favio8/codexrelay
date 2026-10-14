@@ -75,7 +75,7 @@ def adopt(service, codex_home=None):
     info, secret = read_legacy(codex_home)
     if not secret and urlsplit(info["provider"]["base_url"]).hostname not in {"localhost", "127.0.0.1", "::1"}:
         raise ValueError("已找到供应商配置，但没有找到对应 Key；请先设置 " + info["credential_variable"])
-    if any(task["status"] in {"queued", "running", "cancelling"} for task in service.store.snapshot()["tasks"]):
+    if any(task["status"] in {"queued", "running", "cancelling", "compacting", "wrapping_up"} for task in service.store.snapshot()["tasks"]):
         raise ValueError("请先结束 CodexRelay 中正在执行的任务")
     previous = service.store.setting("active_provider_id")
     provider_id = service.save_provider(**info["provider"], api_key=secret)["id"]

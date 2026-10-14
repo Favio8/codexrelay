@@ -48,7 +48,7 @@ fn main(){
    if let Ok(value)=request(&handle,"snapshot",json!({})){
     if value["ok"]==true{
      let enabled=value["data"]["enabled"].as_bool().unwrap_or(false);
-     let count=value["data"]["tasks"].as_array().map(|tasks|tasks.iter().filter(|t|matches!(t["status"].as_str(),Some("queued"|"running"|"cancelling"))).count()).unwrap_or(0);
+     let count=value["data"]["tasks"].as_array().map(|tasks|tasks.iter().filter(|t|matches!(t["status"].as_str(),Some("queued"|"running"|"cancelling"|"compacting"|"wrapping_up"))).count()).unwrap_or(0);
      let text=format!("{} · {} 个活动任务",if enabled{"已开启"}else{"已关闭"},count);
      let _=status.set_text(&text); let _=tray.set_tooltip(Some(format!("CodexRelay · {text}")));
     }

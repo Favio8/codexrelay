@@ -48,6 +48,7 @@ changes are not fully journaled, so inspect the entire workspace too.
 While delegated coding is running, do not independently mutate that workspace.
 Stopping preserves partial changes; inspect before taking over. Never auto-push,
 deploy, modify host configuration or delete important files in a subagent task.
+Create/reuse a TaskGroup for the same goal. Default budget inherits the provider; do not routinely impose a smaller token_budget. After every ended run, read get_task_checkpoint and actual evidence, clear recovery, record_task_verification with disposition/checkpoint ID/hash and remaining_items. Resume with resume_agent and an idempotency key, using exactly the verified remaining_items joined by newlines. Default authorization permits three continuations (four runs total). Never create another same-goal group to reset counters. Only App grants extra budget or rounds. If evidence is incomplete, supplement independent checks before resuming. App does not start continuation while Codex is offline.
 This policy controls CodexRelay external agents only, not built-in Codex agents.
 
 """ + END
@@ -205,7 +206,7 @@ def install(store, codex_home=None, migrate=False):
         previous_entry = servers.get("codexrelay")
         if servers.get("codexrelay") and not owned(servers["codexrelay"], store, directory):
             raise ValueError("同名配置不属于本软件")
-        if any(t["status"] in {"queued", "running", "cancelling"} for t in store.snapshot()["tasks"]):
+        if any(t["status"] in {"queued", "running", "cancelling", "compacting", "wrapping_up"} for t in store.snapshot()["tasks"]):
             raise ValueError("请先结束运行中的任务")
         rules = strip_block(decode(before_rules), BEGIN, END)
         legacy = None
@@ -255,7 +256,7 @@ def uninstall(store, codex_home=None):
     directory = codex_dir(codex_home)
     with lock(store):
         store.set_setting("enabled", False)
-        if any(t["status"] in {"queued", "running", "cancelling"} for t in store.snapshot()["tasks"]):
+        if any(t["status"] in {"queued", "running", "cancelling", "compacting", "wrapping_up"} for t in store.snapshot()["tasks"]):
             raise ValueError("已禁止新委托；请等待或停止当前任务后再解除接入")
         # Recovery remains owned by the host; never acknowledge on its behalf.
         from .backends import ensure_removable

@@ -11,13 +11,17 @@ _TRUSTED_HOST_BASH = (
 TOOL_SCHEMAS = {
     "Read": {
         "name": "Read",
-        "description": "Read a bounded UTF-8 text file. Use this before editing.",
+        "description": "Read a bounded UTF-8 text range. For a focused edit in a large/minified file, prefer Grep of the target text; its snippet is sufficient inspection.",
         "parameters": {
             "type": "object",
             "properties": {
                 "path": {"type": "string", "description": "Path within workspace."},
                 "offset": {"type": "integer", "description": "Starting line, 0-indexed."},
                 "limit": {"type": "integer", "description": "Number of lines to read."},
+                "char_offset": {"type": "integer", "description": "Character offset within selected lines; use next_read for exact pagination."},
+                "char_limit": {"type": "integer", "description": "Character cap, default 12000 (2000 for a long-line preview); independently bounded."},
+                "full": {"type": "boolean", "description": "Explicit full-file request, still bounded by tool output limits."},
+                "purpose": {"type": "string", "enum": ["inspect", "pre_edit", "verify"], "description": "Use pre_edit or verify to request a fresh check."},
             },
             "required": ["path"],
         },
@@ -76,6 +80,8 @@ TOOL_SCHEMAS = {
             "type": "object",
             "properties": {
                 "pattern": {"type": "string", "description": "Glob pattern."},
+                "offset": {"type": "integer", "description": "Sorted match offset, default 0."},
+                "limit": {"type": "integer", "description": "Page limit, default 100, maximum 500. Narrow pattern if traversal is incomplete."},
                 "path": {"type": "string", "description": "Optional base directory."},
             },
             "required": ["pattern"],
@@ -83,7 +89,7 @@ TOOL_SCHEMAS = {
     },
     "Grep": {
         "name": "Grep",
-        "description": "Search bounded workspace text files with a safe RE2 expression.",
+        "description": "Search file contents with a safe RE2 expression. Accepts a file or directory path. Returns exact matching text with line/column locations, including matches late in minified files. A snippet is sufficient inspection before a focused Edit.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -91,7 +97,7 @@ TOOL_SCHEMAS = {
                     "type": "string",
                     "description": "RE2 expression; look-around/backreferences are unsupported.",
                 },
-                "path": {"type": "string", "description": "Optional base directory."},
+                "path": {"type": "string", "description": "File to search, or base directory. Use the known file path directly."},
                 "glob": {"type": "string", "description": "File glob filter."},
                 "max_matches": {"type": "integer", "description": "Result limit."},
             },

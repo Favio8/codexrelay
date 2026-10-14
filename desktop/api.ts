@@ -2,7 +2,7 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 export class RpcError extends Error {
  constructor(message:string, public details='', public code='') {super(message);this.name='RpcError';}
 }
-const readMethods=new Set(['snapshot','integration_preview','backend_catalog','get_task','get_usage_prices','codex_usage_settings']);
+const readMethods=new Set(['snapshot','integration_preview','backend_catalog','get_task','get_usage_prices','codex_usage_settings','get_task_group','get_task_checkpoint']);
 export async function rpc<T = any>(method: string, params: Record<string, unknown> = {}): Promise<T> {
  if (!isTauri()) throw new Error('请在 CodexRelay 桌面应用中使用此功能。浏览器仅用于界面预览。');
  for(let attempt=0;;attempt++) {
@@ -17,8 +17,9 @@ export async function rpc<T = any>(method: string, params: Record<string, unknow
 }
 export interface Provider { id:string; revision?:string; name:string; kind:string; base_url:string; flash_model:string; pro_model:string; reasoning_effort:string; pro_reasoning_effort?:string; max_total_tokens?:number; max_output_tokens?:number; max_turns?:number; max_run_seconds?:number; has_key:boolean; }
 export interface Project { path:string; disabled:boolean; }
-export interface Task { id:string; title:string; workspace:string; model:string; provider?:string; provider_name?:string; mode:string; status:string; backend_id?:string; backend_version?:string; started_at?:number; created_at?:number; finished_at?:number; result?:unknown; error?:string; failure?:{code:string;title:string;hint:string;metrics?:Record<string,number>}; cancel_requested?:boolean; verification?:{status:string;evidence?:string}; telemetry?:{workspace_review?:{review_id:string;status:string}|null;tokens?:{total:number|null;interrupted_request?:boolean};budget?:{metered_tokens:number;warning:boolean};bash?:{calls:number;failure_count:number};workspace_changes?:{added:string[];modified:string[];deleted:string[];complete:boolean;out_of_scope:string[]}}; }
-export interface Snapshot { enabled:boolean; providers:Provider[]; active_provider_id:string|null; projects:Project[]; tasks:Task[]; active_backend?:string; usage_source?:string; usage_revision?:number; }
+export interface Task { group_id?:string;round_index?:number;task_kind?:string;token_budget?:number;budget_source?:string;checkpoint?:{checkpoint_id:string;sha256:string}; id:string; title:string; workspace:string; model:string; provider?:string; provider_name?:string; mode:string; status:string; backend_id?:string; backend_version?:string; started_at?:number; created_at?:number; finished_at?:number; result?:unknown; error?:string; failure?:{code:string;title:string;hint:string;metrics?:Record<string,number>}; cancel_requested?:boolean; verification?:{status:string;evidence?:string}; telemetry?:{workspace_review?:{review_id:string;status:string}|null;tokens?:{total:number|null;interrupted_request?:boolean};budget?:{metered_tokens:number;warning:boolean};bash?:{calls:number;failure_count:number};workspace_changes?:{added:string[];modified:string[];deleted:string[];complete:boolean;out_of_scope:string[]}}; }
+export interface ExecutionDefaults {version?:number;auto_continue?:boolean;max_auto_continuations?:number;context_optimization?:boolean;warning_ratio?:number;wrap_ratio?:number;context_ratio?:number;summary_tokens?:number;unknown_context_bytes?:number;}
+export interface Snapshot { enabled:boolean; providers:Provider[]; active_provider_id:string|null; projects:Project[]; tasks:Task[]; active_backend?:string; usage_source?:string; usage_revision?:number; execution_defaults?:ExecutionDefaults;task_groups?:{group_id:string;status:string;title:string;run_ids:string[];max_auto_continuations:number}[]; }
 export const empty:Snapshot = {enabled:false,providers:[],active_provider_id:null,projects:[],tasks:[]};
 
 export interface UsagePrice { input:string; cached_input:string|null; cache_write?:string|null; output:string; currency:'CNY'; label:string; version:string; created_at:number; source:string; }

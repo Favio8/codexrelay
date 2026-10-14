@@ -47,3 +47,11 @@ runtime/, build output, local evidence and machine-specific working documents ar
 Set CODEXRELAY_HOME to a disposable application-data directory. Keep coding fixtures outside runtime/: the engine rejects a workspace containing its own runtime. Test-only WebView2 debugging must not become a production default.
 
 See [testing](TESTING.md) for commands. The actual application icon is desktop/assets/codexrelay-icon.png; Tauri bundle icons are checked in under src-tauri/icons/.
+
+## 0.3.0 execution iteration
+
+After source changes synchronize Python and rebuild the Pi bridge if JavaScript changed. The existing preparation script now keeps Node/LICENSE files whose hashes match the pinned archive, avoiding unnecessary replacement of an in-use Node executable. Changes to the desktop still require a native rebuild; Python-only changes can repackage the built binary. See [schema 4, API and implementation decisions](EXECUTION-OPTIMIZATION.md). Run the protocol and isolated upgrade fixtures before applying an installer; this local delivery does not authorize everyday installation.
+
+## 0.3.1 release artifacts
+
+`tests/package_execution_patch.py` assembles the verified installer, complete source, evidence, dependency notices and SHA256 file. It needs the retained local 0.3.0 and 0.3.1 evidence; a fresh clone does not fabricate those records. Public assets are under the [v0.3.1 GitHub Release](https://github.com/Favio8/codexrelay/releases/tag/v0.3.1). Acceptance tables name paths inside the evidence ZIP, so all listed records can be inspected without the development machine's temporary directories. Paid-model experiment scripts require separate authorization and must not be invoked as routine release checks.

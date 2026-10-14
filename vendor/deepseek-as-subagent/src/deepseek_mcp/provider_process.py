@@ -145,7 +145,7 @@ def _decode_response(raw: bytes) -> tuple[ProviderResponse | None, str, bool]:
         if not isinstance(payload, dict):
             raise ProviderResponseError("provider envelope must be an object")
         if payload.get("kind") == "ok":
-            return ProviderResponse.from_payload(payload["response"]), "", False
+            return ProviderResponse.from_payload(payload["response"], allow_incomplete=True), "", False
         summary = payload["summary"]
         retryable = payload["retryable"]
         if not isinstance(summary, str) or not isinstance(retryable, bool):
@@ -160,7 +160,7 @@ def _decode_response(raw: bytes) -> tuple[ProviderResponse | None, str, bool]:
         return None, "category=client", False
     allowed = {
         "category=client", "category=connection", "category=rate_limit", "category=quota", "category=reasoning_history",
-        "category=api", "category=output_truncated", "category=content_filtered",
+        "category=api", "category=output_truncated", "category=content_filtered", "category=context_length",
     }
     base = summary.split(" status=", 1)[0]
     if base not in allowed:

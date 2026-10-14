@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 
 from .child_runtime import ChildRuntimeError, runtime_is_within_workspace
 from . import windows_file_io
-from .safety import is_unsafe_workspace_root
+from .safety import is_unsafe_workspace_root, normalized_path
 from .workspace_guard import configure_workspace_identity
 from .provider_settings import (
     DEFAULT_MAX_OUTPUT_TOKENS,
@@ -416,17 +416,22 @@ class Config:
     task_root: Path | None = None
     write_paths: list[Path] | None = None
     command_home: Path | None = field(default=None, repr=False)
+    task_kind: str = 'implementation'
+    task_contract: dict = field(default_factory=dict)
+    execution_options: dict = field(default_factory=dict)
+    budget_source: str = 'provider_default'
+    context_window: int | None = None
 
     def __post_init__(self) -> None:
         if is_unsafe_workspace_root(self.workspace):
             raise RuntimeError("workspace is a protected or overly broad host path")
-        self.workspace = self.workspace.resolve(strict=True)
+        self.workspace = normalized_path(self.workspace.resolve(strict=True))
         self.expected_workspace_identity = configure_workspace_identity(
             self.workspace, self.expected_workspace_identity
         )
         if self.task_root is not None:
             root = Path(self.task_root)
-            self.task_root = (root if root.is_absolute() else self.workspace / root).resolve(strict=True)
+            self.task_root = normalized_path((root if root.is_absolute() else self.workspace / root).resolve(strict=True))
             if not self.task_root.is_dir() or not self.task_root.is_relative_to(self.workspace) or is_unsafe_workspace_root(self.task_root):
                 raise RuntimeError('task_root must be a directory within the workspace')
         if self.write_paths is not None:

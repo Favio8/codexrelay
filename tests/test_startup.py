@@ -44,7 +44,7 @@ class StartupTests(unittest.TestCase):
         self.assertTrue(upgraded.setting('enabled'))
         self.assertEqual(upgraded.setting('active_backend'), 'pi')
         with upgraded.connect() as db:
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 1)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], Store.SCHEMA_VERSION)
             self.assertIsNotNone(db.execute("SELECT name FROM sqlite_master WHERE name='usage_events'").fetchone())
 
     def test_busy_snapshot_details_are_actionable_and_distinct_from_permissions(self):

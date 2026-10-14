@@ -64,17 +64,23 @@ def call_with_retry(
     *,
     cancel_signal: CancellationSignal | None = None,
     deadline: Deadline | None = None,
+    before_attempt=None,
+    failed_attempt=None,
 ):
     """Retry only redacted transient failures from the killable child process."""
     last_summary = "category=api"
     attempts = 1 + API_RETRY_ATTEMPTS
     for attempt in range(attempts):
         check_cancel(cancel_signal)
+        if before_attempt:
+            config = before_attempt(config)
         response, summary, retryable = _request_once(
             config, messages, tools, cancel_signal, deadline
         )
         if response is not None:
             return response
+        if failed_attempt:
+            failed_attempt(summary)
         if not retryable:
             if summary in {"category=output_truncated", "category=content_filtered"}:
                 raise ProviderOutputError(

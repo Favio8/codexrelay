@@ -10,7 +10,7 @@ def classify_error(error):
         return {'code': 'task_scope_violation', 'title': '命令改动超出任务范围', 'hint': '任务已停止；检查记录中的文件差异。已有文件未自动回滚。'}
     if "LOCAL_TOKEN_BUDGET" in text or "run token budget" in text:
         return {"code": "local_token_budget", "title": "本地任务 Token 预算已用完",
-                "hint": "这不是账户余额不足。先让 Codex 核验已有修改，再继续剩余子任务；也可在供应商设置中提高单次任务预算。",
+                "hint": "本轮额度不足以继续请求，进度已保留。这不是账户余额不足；等待 Codex 核验后续作。可在任务详情追加执行机会或调整后续预算。",
                 "metrics": {name: int(value) for name, value in re.findall(r"\b(used|limit|next_input_estimate|history_compactions)=(\d+)", text)}}
     if "category=quota" in text or "status=402" in text:
         return {"code": "provider_quota", "title": "供应商额度或付款限制", "hint": "请检查供应商账户额度；提高本地任务预算不能解决这个问题。"}

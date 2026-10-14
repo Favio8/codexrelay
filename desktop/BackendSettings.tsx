@@ -16,7 +16,7 @@ export default function BackendSettings({snapshot,onChanged}:{snapshot:Snapshot;
   <label className="field">模型供应商<select aria-label="后端模型供应商" disabled={busy} value={provider} onChange={e=>setProvider(e.target.value)}><option value="">请选择</option>{snapshot.providers.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label></div>
   <div className="backend-actions"><button className="primary" disabled={busy||!provider||!backends.some(item=>item.id===backend&&item.installed)} onClick={()=>void action('activate_execution')}>应用设置</button><div className="backend-test"><label className="field">测试模型<select aria-label="测试模型" disabled={busy} value={slot} onChange={e=>setSlot(e.target.value)}><option value="flash">普通模型</option><option value="pro">增强模型</option></select></label><button disabled={busy||!provider||!backends.some(item=>item.id===backend&&item.installed)} onClick={()=>void action('test_backend')}>测试连接</button><small className="subtle">消耗少量额度</small></div></div>
   {error&&<div role="alert" className="alert error"><div>{error}{details&&<details className="error-details"><summary>查看详情</summary><p>{details}</p></details>}</div></div>}{message&&<p role="status" className="alert success">{message}</p>}
-  <p className="subtle backend-hint">切换仅影响新任务。</p>
+  <p className="subtle backend-hint">切换影响后续新轮次；当前轮保持原配置。</p>
   <details className="advanced-help"><summary>高级说明</summary><div>
    <p>运行中的任务保持原后端。两种引擎均使用受控工具、任务预算和修改日志；Pi 的命令修改另保留工作区检查事项。</p>
    <p>命令以当前用户权限执行，这些控制不是操作系统沙箱。</p>

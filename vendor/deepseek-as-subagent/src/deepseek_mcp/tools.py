@@ -20,7 +20,7 @@ from .file_io import (
 from .file_identity import bounded_integer
 from .safe_regex import RegexPattern, SafeRegexError, compile_safe_regex
 from .resource_budget import MutationBudget, ResourceBudgetExceeded, apply_mutation
-from .safety import SandboxViolation
+from .safety import SandboxViolation, resolve_safe_path
 from .tool_schemas import build_tool_schemas
 from .transaction_report import mutation_warning
 from .walk_support import WorkspaceEntryTooLarge
@@ -30,6 +30,7 @@ MAX_WRITE_BYTES = 5_000_000  # 单次 Write 最大字节数（5MB，防 DeepSeek
 MAX_GLOB_RESULTS = 500
 MAX_GREP_FILES = 10_000
 MAX_GREP_LINE_CHARS = 2_000
+LONG_LINE_PREVIEW_CHARS = 2_000
 def _truncate(text: str) -> str:
     if len(text) > MAX_TOOL_OUTPUT:
         return (
@@ -68,12 +69,33 @@ def _execute_read(args: dict, workspace: Path) -> str:
         text, _identity = _read_workspace_text(
             workspace, path, reject_binary=True
         )
-        text = _slice_lines(text, args)
+        total_chars = len(text)
+        total_bytes = len(text.encode('utf-8', errors='replace'))
+        lines = text.splitlines(keepends=True)
+        offset = bounded_integer(args.get('offset', 0), 'offset', minimum=0)
+        limit = bounded_integer(args.get('limit', len(lines) if args.get('full') is True else 200), 'limit', minimum=0)
+        char_offset = bounded_integer(args.get('char_offset', 0), 'char_offset', minimum=0)
+        long_line = any(len(line) > 12000 for line in lines[offset:offset + limit])
+        default_chars = LONG_LINE_PREVIEW_CHARS if long_line else 12000
+        char_limit = bounded_integer(args.get('char_limit', MAX_TOOL_OUTPUT - 1500 if args.get('full') is True else default_chars), 'char_limit', minimum=1)
+        char_limit = min(char_limit, MAX_TOOL_OUTPUT - 1500)
+        selected = ''.join(lines[offset:offset + limit])
+        page = selected[char_offset:char_offset + char_limit]
+        next_char = char_offset + len(page)
+        more_chars = next_char < len(selected)
+        more_lines = offset + limit < len(lines)
+        following = {'path': path, 'offset': offset, 'limit': limit, 'char_offset': next_char} if more_chars else {'path': path, 'offset': offset + limit, 'limit': limit, 'char_offset': 0}
+        metadata = {'total_bytes': total_bytes, 'total_chars': total_chars, 'total_lines': len(lines),
+                    'line_offset': offset, 'line_limit': limit, 'char_offset': char_offset, 'returned_chars': len(page),
+                    'truncated': more_chars or more_lines, 'reason': 'character_limit' if more_chars else 'line_limit' if more_lines else None,
+                    'next_read': following if more_chars or more_lines else None, 'version_sha256': _identity.digest.hex()}
+        if long_line and (more_chars or more_lines):
+            metadata['search_hint'] = 'Long line: use Grep with this file path and the target key/text. The exact matched snippet is sufficient for a focused Edit; unrelated pages are not required.'
     except WorkspaceFileNotFound:
         return f"ERROR: file not found: {path}"
     except (OSError, SandboxViolation, ToolInputError) as e:
         return f"ERROR: failed to read {path}: {e}"
-    return _truncate(text)
+    return '[Read range ' + json.dumps(metadata, ensure_ascii=False) + ']\n' + page
 
 def _execute_write(
     args: dict, workspace: Path, mutation_budget: MutationBudget | None = None
@@ -218,11 +240,16 @@ def _execute_glob(args: dict, workspace: Path) -> str:
         with _parse_glob_request(args, workspace) as walk:
             matches, result_limit = _scan_glob_matches(walk)
             traversal_limit = walk.truncated
+        page_offset = bounded_integer(args.get('offset', 0), 'offset', minimum=0)
+        page_limit = bounded_integer(args.get('limit', 100), 'limit', minimum=1, maximum=500)
+        matches.sort()
+        total_known = len(matches)
+        page = matches[page_offset:page_offset + page_limit]
     except (SandboxViolation, ToolInputError) as exc:
         return f"ERROR: {exc}"
     return _format_glob_result(
-        matches, result_limit, traversal_limit, workspace.resolve()
-    )
+        page, result_limit, traversal_limit, workspace.resolve()
+    ) + f'\nRange offset={page_offset} limit={page_limit}; remaining_known={max(0, total_known - page_offset - len(page))}; total_incomplete={result_limit or traversal_limit}. Continue with offset={page_offset + len(page)} or narrow pattern.'
 
 
 def _new_notebook() -> dict:
@@ -389,11 +416,13 @@ def _grep_file(entry: WalkEntry, regex: RegexPattern, limit: int) -> list[str]:
     lines = data.decode("utf-8", errors="replace").splitlines()
     matches: list[str] = []
     for line_number, line in enumerate(lines, 1):
-        if not regex.search(line):
+        matched = regex.search(line)
+        if not matched:
             continue
-        displayed = line[:MAX_GREP_LINE_CHARS]
+        start = max(0, matched.start() - 200) if len(line) > MAX_GREP_LINE_CHARS else 0
+        displayed = line[start:start + MAX_GREP_LINE_CHARS]
         if len(line) > MAX_GREP_LINE_CHARS:
-            displayed += "... [line truncated]"
+            displayed = f'[columns {start + 1}-{start + len(displayed)}; line truncated] ' + displayed
         matches.append(f"{entry.relative_to_workspace}:{line_number}: {displayed}")
         if len(matches) >= limit:
             break
@@ -411,6 +440,12 @@ def _parse_grep_request(
     base = args.get("path", "")
     if not isinstance(base, str):
         raise ToolInputError("'path' must be a string")
+    if base:
+        selected = resolve_safe_path(base, workspace)
+        if selected.is_file():
+            import glob
+            base = str(selected.parent)
+            file_glob = glob.escape(selected.name)
     limit = bounded_integer(
         args.get("max_matches", 100), "max_matches", minimum=1, maximum=1000
     )

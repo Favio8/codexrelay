@@ -33,6 +33,40 @@ const records=[{type:'session_meta',payload:{id:'native-log',model_provider:'cus
 fs.writeFileSync(path.join(logs,'rollout-native.jsonl'),records.map(r=>JSON.stringify(r)).join('\n')+'\n');
 let app,browser,page;
 const rpc=(method,params={})=>page.evaluate(async({method,params})=>window.__TAURI_INTERNALS__.invoke('relay_request',{method,params}),{method,params});
+function approveAuthorizationDialog(){
+ const code=`$ProgressPreference='SilentlyContinue';[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false);Add-Type -TypeDefinition @'
+using System;using System.Text;using System.Runtime.InteropServices;
+public static class RelayDialogFixture {
+ public delegate bool EnumProc(IntPtr h,IntPtr p);
+ [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc callback,IntPtr p);
+ [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h,out uint id);
+ [DllImport("user32.dll",EntryPoint="GetClassLongW")] public static extern uint GetClassLong(IntPtr h,int index);
+ [DllImport("user32.dll")] public static extern IntPtr GetDlgItem(IntPtr h,int id);
+ [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr h,uint message,IntPtr w,IntPtr l);
+ [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h,uint message,IntPtr w,IntPtr l);
+ public static IntPtr FindDialog(uint expected){IntPtr result=IntPtr.Zero;EnumWindows((h,p)=>{uint owner;GetWindowThreadProcessId(h,out owner);if(owner==expected&&GetClassLong(h,-32)==32770){result=h;return false;}return true;},IntPtr.Zero);return result;}
+
+}
+'@
+$taskUntil=[DateTime]::UtcNow.AddSeconds(15)
+while([DateTime]::UtcNow -lt $taskUntil){
+ $taskWindow=[RelayDialogFixture]::FindDialog(${app.pid})
+ if($taskWindow.ToInt64() -ne 0){
+  $taskDefault=[RelayDialogFixture]::SendMessage($taskWindow,0x400,[IntPtr]::Zero,[IntPtr]::Zero).ToInt64()
+  $taskButtonId=[int]($taskDefault -band 65535)
+  if($taskButtonId -gt 0){
+   [RelayDialogFixture]::PostMessage($taskWindow,0x111,[IntPtr]$taskButtonId,[IntPtr]::Zero)|Out-Null;Write-Output 'NATIVE_AUTHORIZATION_DIALOG_ACCEPTED';exit 0
+  }
+ }
+ Start-Sleep -Milliseconds 100
+}
+$taskSeen=@('dialog='+$taskWindow+' default='+$taskButtonId)
+throw ('Isolated native authorization dialog not found; owned windows: '+($taskSeen -join '; '))
+`;
+ const ps=path.join(process.env.SystemRoot,'System32/WindowsPowerShell/v1.0/powershell.exe');
+ const helper=spawn(ps,['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(code,'utf16le').toString('base64')],{env,windowsHide:true});let stdout='',stderr='';helper.stdout.on('data',c=>stdout+=c);helper.stderr.on('data',c=>stderr+=c);
+ return new Promise((resolve,reject)=>{helper.once('error',reject);helper.once('exit',exit=>exit===0?resolve(stdout):reject(new Error(stderr||stdout)));});
+}
 try{
  app=spawn(path.join(staging,'codexrelay.exe'),[],{env,windowsHide:true,stdio:'ignore'});
  const until=Date.now()+25000;
@@ -45,10 +79,45 @@ try{
  await page.getByText('设置已应用，新任务使用此组合。',{exact:true}).waitFor();
  assert.equal((await rpc('snapshot')).data.active_backend,'pi');
  assert.equal((await rpc('snapshot')).data.enabled,false);
+ await page.getByLabel('最多自动续作次数',{exact:true}).fill('2');
+ await page.getByRole('button',{name:'保存执行默认设置',exact:true}).click();
+ await page.getByText('执行默认设置已保存，仅影响新任务。',{exact:true}).waitFor();
+ assert.equal((await rpc('snapshot')).data.execution_defaults.max_auto_continuations,2);
  await page.getByRole('button',{name:'测试连接',exact:true}).click();
  await page.locator('.alert.success,.alert.error').filter({hasText:/连接测试通过|失败|操作|runtime|workspace/}).first().waitFor({timeout:45000});
  assert((await page.locator('body').innerText()).includes('连接测试通过。'),await page.locator('body').innerText());
  assert.equal(requests,2);
+ // Seed a real Pi Read run in this isolated state; the host process stays independent of GUI lifetime.
+ const workspace=path.join(area,'execution workspace');fs.mkdirSync(workspace);fs.writeFileSync(path.join(workspace,'probe.txt'),'NATIVE_EXECUTION_EVIDENCE');
+ const seed=`import time\nfrom pathlib import Path\nfrom codexrelay.service import Service\nfrom codexrelay.mcp_server import Relay\ns=Service();s.store.set_setting('enabled',True)\nr=Relay(s.store,s.vault,Path(${JSON.stringify(workspace)}));j=r.start('Read probe.txt for native task-group verification','','readonly','flash',task_kind='analysis')\nwhile s.store.task(j['job_id'])['status'] in {'queued','running','compacting','wrapping_up','cancelling'}: time.sleep(.05)\ns.store.set_setting('enabled',False)\nprint(j['job_id'])\n`;
+ const worker=spawn(python,['-I','-B','-X','utf8','-c',seed],{env,windowsHide:true});let seedOut='',seedErr='';worker.stdout.on('data',c=>seedOut+=c);worker.stderr.on('data',c=>seedErr+=c);
+ assert.equal(await new Promise(resolve=>worker.once('exit',resolve)),0,seedErr);
+ const jobId=seedOut.trim(),run=(await rpc('get_task',{id:jobId})).data;
+ assert.equal(run.status,'completed');assert(run.checkpoint);assert.equal(run.verification.status,'pending');
+ await page.getByRole('button',{name:'任务记录',exact:true}).click();
+ await page.getByText('Read probe.txt for native task-group verification',{exact:true}).click();
+ await page.getByText('等待 Codex 核验',{exact:true}).first().waitFor();
+ await page.getByRole('button',{name:'查看进度',exact:true}).click();
+ await page.getByText('摘要是进度索引，仍需核验文件、测试与恢复记录。',{exact:true}).waitFor();
+ const grant=await rpc('get_task_group',{group_id:run.group_id});assert.equal(grant.data.max_auto_continuations,2);
+ // Exercise real App RPC with optimistic versions; no new model call is authorized by this operation.
+ const priorRequests=requests;
+ let dialog=approveAuthorizationDialog();await page.getByRole('button',{name:'追加一次执行机会',exact:true}).click();await dialog;
+ let current;
+ for(let attempt=0;attempt<40;attempt++){current=(await rpc('get_task_group',{group_id:run.group_id})).data;if(current.max_auto_continuations===3)break;await new Promise(resolve=>setTimeout(resolve,100));}
+ assert.equal(current.max_auto_continuations,3);
+ await page.getByText('调整后续轮次预算',{exact:true}).click();await page.getByLabel('后续轮次预算',{exact:true}).fill('65536');
+ dialog=approveAuthorizationDialog();await page.getByRole('button',{name:'确认调整后续预算',exact:true}).click();await dialog;
+ for(let attempt=0;attempt<40;attempt++){current=(await rpc('get_task_group',{group_id:run.group_id})).data;if(current.next_round_budget===65536)break;await new Promise(resolve=>setTimeout(resolve,100));}
+ assert.equal(current.next_round_budget,65536);
+ const extension={group_id:run.group_id,expected_version:current.version,idempotency_key:'native-single-grant',add_continuations:0,next_round_budget:65536};
+ assert((await rpc('extend_task_authorization',extension)).ok);
+ assert((await rpc('extend_task_authorization',extension)).ok);
+ const extended=(await rpc('get_task_group',{group_id:run.group_id})).data;assert.equal(extended.max_auto_continuations,3);assert.equal(extended.next_round_budget,65536);
+ assert.equal((await rpc('get_task',{id:jobId})).data.token_budget,1000000);assert.equal(requests,priorRequests);
+ assert.equal((await rpc('snapshot')).data.enabled,false);
+ await page.getByRole('button',{name:'关闭详情',exact:true}).click();
+ await page.getByRole('button',{name:'设置与诊断',exact:true}).click();
  assert.equal((await rpc('codex_usage_settings')).data.enabled,false);
  await page.getByRole('button',{name:'开启本机日志统计',exact:true}).click();
  const group=page.getByRole('button',{name:/custom · log-model/});await group.waitFor();
@@ -71,7 +140,7 @@ try{
  await page.getByRole('heading',{name:'执行后端',exact:true}).scrollIntoViewIfNeeded();
  const output=path.join(root,'artifacts','evidence');fs.mkdirSync(output,{recursive:true});
  await page.screenshot({path:path.join(output,version+'-native-settings.png')});
- const result={ok:true,target:'actual Tauri/WebView2 and bundled Python/Pi',requests,checks:['atomic backend/provider activation preserves disabled switch','Pi real local model+Read loop from GUI','opt-in Codex log import from old session directory','per-model cached-input prices','no message body in DB or DOM','stop scanning and clear cache without deleting logs','managed-rule upgrade preserves user rules','900x600 layout'],fixture:area};
+ const result={ok:true,target:'actual Tauri/WebView2 and bundled Python/Pi',requests,checks:['atomic backend/provider activation preserves disabled switch','Pi real local model+Read loop from GUI','new execution defaults through UI','real Pi task group displayed with pending verification and on-demand checkpoint','native App grant and budget buttons with real Windows confirmation dialogs','App RPC grant idempotency and frozen current budget without model launch','opt-in Codex log import from old session directory','per-model cached-input prices','no message body in DB or DOM','stop scanning and clear cache without deleting logs','managed-rule upgrade preserves user rules','900x600 layout'],uncovered:[],fixture:area};
  fs.writeFileSync(path.join(output,version+'-native.json'),JSON.stringify(result,null,2));console.log(JSON.stringify(result,null,2));
 }catch(error){
  if(page)console.error('Native failure state:',await page.locator('body').innerText());

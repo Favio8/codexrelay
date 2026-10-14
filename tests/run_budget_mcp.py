@@ -50,7 +50,7 @@ async def run():
                     reply=await client.call_tool(name,kwargs);assert not reply.isError,reply
                     return json.loads(reply.content[0].text)
                 outcome=await call('delegate_to_deepseek',task='Write the fixture file')
-                assert outcome['status']=='failed',outcome
+                assert outcome['status']=='budget_stopped',outcome
                 assert outcome['failure']['code']=='local_token_budget',outcome
                 assert outcome['failure']['metrics']['limit']==32768,outcome
                 assert outcome['telemetry']['tokens']['prompt'] == 41000, outcome
