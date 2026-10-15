@@ -99,5 +99,29 @@ class PublicReleaseTests(unittest.TestCase):
             _runtime.prepare(workspace,profile=self.area/'profile')
         self.assertTrue(module.exists())
 
+    def test_runtime_preparation_detects_requested_alias_after_resolving_its_boundary(self):
+        workspace = self.area / 'workspace'; runtime = workspace / 'runtime'; runtime.mkdir(parents=True)
+        anchor = workspace / 'anchor'; anchor.mkdir()
+        alias = anchor / '..'
+        launchers = runtime / 'Lib/site-packages/bin'; launchers.mkdir(parents=True)
+        (launchers/'unused.exe').write_bytes(str(alias).encode())
+        result = _runtime.prepare(alias,profile=self.area/'profile')
+        self.assertEqual(result['private_prefix_files'],[])
+        self.assertFalse((launchers/'unused.exe').exists())
+        module = runtime / 'module.py'; module.write_text(str(alias),encoding='utf-8')
+        with self.assertRaisesRegex(ValueError,'still contains local build metadata'):
+            _runtime.prepare(alias,profile=self.area/'profile')
+        self.assertTrue(module.exists())
+
+    def test_public_license_manifest_hash_matches_git_copy_and_keeps_local_hash(self):
+        self.write('license-completeness.json', {'reviewed_manifest':'vendor/licenses/manifest.json',
+                   'reviewed_manifest_sha256':'original-crlf-hash','rendered_sections':260})
+        exported = public_evidence(self.area,self.replacements,published_license_manifest_sha256='published-lf-hash')
+        value = json.loads(exported['license-completeness.json'])
+        self.assertEqual(value['reviewed_manifest_sha256'],'published-lf-hash')
+        self.assertEqual(value['published_git_manifest_sha256'],'published-lf-hash')
+        self.assertEqual(value['original_local_manifest_sha256'],'original-crlf-hash')
+        self.assertEqual(value['rendered_sections'],260)
+
 
 if __name__=='__main__':unittest.main()

@@ -15,12 +15,16 @@ def markers(workspace, profile):
 
 
 def prepare(workspace, *, check_only=False, profile=None):
-    workspace = Path(workspace).resolve(strict=True)
+    requested_workspace = Path(workspace).absolute()
+    workspace = requested_workspace.resolve(strict=True)
     runtime = workspace / 'runtime'
     if runtime.is_symlink() or not runtime.is_dir() or not runtime.resolve().is_relative_to(workspace):
         raise ValueError('Expected an owned runtime directory below the workspace')
     runtime = runtime.resolve()
-    needles = markers(workspace, Path(profile or Path.home()))
+    requested_profile = Path(profile or Path.home()).absolute()
+    # Canonical paths enforce the deletion boundary; raw aliases still occur
+    # in generated metadata (Windows short names, junctions and caller paths).
+    needles = markers(workspace, requested_profile.resolve()) + markers(requested_workspace, requested_profile)
     removed, launchers = 0, []
     if not check_only:
         for path in list(runtime.rglob('__pycache__')):

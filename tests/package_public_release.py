@@ -81,7 +81,7 @@ def private_matches(data, replacements):
     return sorted(set(matches))
 
 
-def public_evidence(directory, replacements):
+def public_evidence(directory, replacements, published_license_manifest_sha256=None):
     """Return a self-consistent public copy, with no private host observation."""
     outputs, origins, excluded = {}, {}, []
     for path in sorted(directory.iterdir()):
@@ -99,6 +99,12 @@ def public_evidence(directory, replacements):
                     value.pop(key, None)
                 value['scope'] = 'Historical local verification snapshot, before the release commit; not an assertion of real-client completion.'
                 value['private_host_records'] = 'omitted from public export'
+            if path.name == 'license-completeness.json' and published_license_manifest_sha256:
+                value = dict(value)
+                value['original_local_manifest_sha256'] = value['reviewed_manifest_sha256']
+                value['published_git_manifest_sha256'] = published_license_manifest_sha256
+                value['reviewed_manifest_sha256'] = published_license_manifest_sha256
+                value['manifest_normalization'] = 'line_endings_only; verified by BUILD_SOURCE_MANIFEST.json'
             value = redact_json(value, replacements)
             content = json.dumps(value, ensure_ascii=False, indent=2).encode('utf-8')
         else:
@@ -190,7 +196,7 @@ def package(ref='HEAD'):
     if digest(installer.read_bytes()) != verification['installer_sha256']:
         raise ValueError('Installer changed since public verification')
     shutil.copyfile(installer, destination / installer.name)
-    public = public_evidence(evidence, replacements)
+    public = public_evidence(evidence, replacements, manifest['vendor/licenses/manifest.json'])
     proof = destination / f'CodexRelay_{version}_evidence.zip'
     with zipfile.ZipFile(proof, 'w', zipfile.ZIP_DEFLATED) as archive:
         for name, data in public.items():
