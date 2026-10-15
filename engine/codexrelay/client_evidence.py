@@ -47,26 +47,36 @@ def record_call(store, *, instance, workspace, tool, success, arguments=None, re
     """Persist identifiers only. Do not retain prompts, paths, secrets or outputs."""
     arguments, result = arguments or {}, result if isinstance(result, dict) else {}
     refs = {}
-    for key in ('group_id', 'checkpoint_id', 'verification_id', 'trial_id', 'experiment_id', 'client_binding_id'):
+    for key in ('group_id', 'checkpoint_id', 'verification_id', 'trial_id', 'experiment_id'):
         value = result.get(key, arguments.get(key))
         if isinstance(value, str) and len(value) <= 256:
             refs[key] = value
     run_id = result.get('run_id', result.get('job_id', arguments.get('job_id')))
+    caller_binding = arguments.get('client_binding_id')
+    caller_binding = caller_binding if isinstance(caller_binding, str) and len(caller_binding) <= 256 else None
+    owner_binding = None
     with store.connect() as db:
         if run_id:
             row = db.execute('SELECT payload FROM tasks WHERE id=?', (run_id,)).fetchone()
             if row:
                 task = json.loads(row[0])
-                refs.update({k: task[k] for k in ('group_id', 'client_binding_id', 'trial_id', 'experiment_id') if task.get(k)})
+                refs.update({k: task[k] for k in ('group_id', 'trial_id', 'experiment_id') if task.get(k)})
+                owner_binding = task.get('client_binding_id')
                 refs['run_id'] = run_id
-        if refs.get('group_id') and not refs.get('client_binding_id'):
+        if refs.get('group_id') and not owner_binding:
             row = db.execute('SELECT payload FROM task_groups WHERE id=?', (refs['group_id'],)).fetchone()
             if row:
                 group = json.loads(row[0])
-                refs.update({k: group[k] for k in ('client_binding_id', 'trial_id', 'experiment_id') if group.get(k)})
+                refs.update({k: group[k] for k in ('trial_id', 'experiment_id') if group.get(k)})
+                owner_binding = group.get('client_binding_id')
+        # Keep the historical owner reference for readers of older records;
+        # it is never evidence of who made this particular invocation.
+        if owner_binding:
+            refs['client_binding_id'] = owner_binding
         payload = dict(id=uuid.uuid4().hex, instance=instance, workspace=canonical(workspace),
                        tool=tool, success=bool(success), occurred_at=time.time(),
-                       source='engine_observed_call', **refs)
+                       source='engine_observed_call', owner_binding_id=owner_binding,
+                       caller_binding_id=caller_binding, **refs)
         db.execute('INSERT INTO client_calls VALUES (?,?,?,?)',
                    (payload['id'], instance, payload['occurred_at'], json.dumps(payload)))
     return payload
@@ -80,4 +90,7 @@ def chain(store, *, workspace, group_id=None, instance=None):
     records = [r for r in records if r['workspace'] == normalized and
                (not group_id or r.get('group_id') == group_id) and (not instance or r['instance'] == instance)]
     return {'source': 'engine_observed_call', 'calls': records,
-            'client_identity': 'explicit_report_only', 'external_model_quality': 'not_established'}
+            'client_identity': 'explicit_report_only', 'caller_identity_field': 'caller_binding_id',
+            'owner_identity_field': 'owner_binding_id',
+            'legacy_client_binding_id': 'task owner reference; not caller identity',
+            'external_model_quality': 'not_established'}

@@ -117,7 +117,7 @@ class UsageTests(unittest.TestCase):
         self.price('10','20',model='pro')
         self.task(slot='pro')
         self.assertEqual(self.today()['cost'],{'low':'12','high':'12'})
-        params={**self.provider,'name':'Edited'}
+        params={**self.provider,'name':'Edited','base_url':'https://changed.example/v1'}
         self.service.save_provider(**params)
         task=self.task()
         self.assertIsNone(task['usage_price'])

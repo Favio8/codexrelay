@@ -16,7 +16,7 @@ Codex 的交接顺序：
 2. `start_agent` / `delegate_to_agent` 或 readonly 对应入口提交 `group_id`；旧 DeepSeek 命名入口始终使用原引擎。
 3. Run 结束后读取 `get_task_checkpoint` 和实际文件、测试／引用。`completed` 仅表示执行结束，预算停止、取消或中断也可核验。
 4. 查询 `get_task_recovery`，逐项核对事务路径、当前内容及哈希，再确认精确事务 ID；Pi 观察检查另外用当前状态哈希确认。摘要不能替代这些检查。
-5. `record_task_verification` 提交 `disposition`、当前 checkpoint ID／SHA256、检查依据、完成项和 `remaining_items`。结果不充分时使用 `needs_more_evidence`，补充真实文件／来源后再核验。
+5. `record_task_verification` 提交 `disposition`、当前 checkpoint ID／SHA256、检查依据、完成项和 `remaining_items`。`verified_partial` 的 `passed=true` 表示本次已完成项通过独立核验，不代表整体目标已经完成；未通过的核验不能授权续作。结果不充分时使用 `needs_more_evidence`，补充真实文件／来源后再核验。
 6. `resume_agent` 提交核验 ID、checkpoint ID／SHA256、幂等键，以及与已核验 `remaining_items` 按换行连接完全一致的 `remaining_task`。该入口复用组，不接受扩大的能力或路径。
 7. 全部完成记录 `verified_complete`；Codex 接手完成时增加 `parent_completed=true`，显示 `completed_by_parent`，不编造额外 Run。
 

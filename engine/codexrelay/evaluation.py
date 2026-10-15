@@ -30,14 +30,24 @@ CREATE TABLE IF NOT EXISTS evaluation_usage_events(id TEXT PRIMARY KEY,trial_id 
 GROUP_BACKENDS = {'A': None, 'B': 'deepseek', 'C': 'pi'}
 TRIAL_ENDINGS = {'completed', 'failed', 'cancelled', 'budget_stopped', 'interrupted', 'timeout', 'not_delegated', 'completed_by_parent'}
 KINDS = {'execution', 'summary', 'retry', 'continuation', 'probe'}
+HASH_CHUNK_BYTES = 1024 * 1024
+LOG_LINE_BYTES = 1024 * 1024
 
 
 def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
 
 
-def file_hash(path):
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+def file_hash(path, limit=None):
+    result=hashlib.sha256()
+    with Path(path).open('rb') as stream:
+        remaining=limit
+        while remaining is None or remaining>0:
+            chunk=stream.read(HASH_CHUNK_BYTES if remaining is None else min(HASH_CHUNK_BYTES,remaining))
+            if not chunk:break
+            result.update(chunk)
+            if remaining is not None:remaining-=len(chunk)
+    return result.hexdigest()
 
 
 def integer(value, name, minimum=0):
@@ -105,6 +115,103 @@ def price_snapshot(value):
     return result
 
 
+def owned_sessions(binding):
+    return {value for value in (binding.get('session_id'),binding.get('root_session_id'),*binding.get('related_sessions',[]))
+            if isinstance(value,str) and value.strip()}
+
+
+def main_usage_selection(events):
+    """Count one telemetry chain per session, retaining both sources as evidence.
+
+    Direct events supersede matching cumulative windows or the same response ID.
+    Incomplete overlap remains a visible gap instead of adding both streams.
+    """
+    groups={}
+    for event in events:
+        if event.get('attributable') and event.get('usage'):
+            # Host cumulative counters cover the whole session, including model
+            # switches. Splitting that chain by model would add its prefix twice.
+            key=(event['trial_id'],event['session_id'])
+            groups.setdefault(key,[]).append(event)
+    selected,summaries,issues=[],[],[]
+    lower_bound=0
+    def tokens(rows):return sum(row['usage']['total'] for row in rows)
+    def counters(rows):return tuple(sum(row['usage'][field] for row in rows) for field in ('prompt','completion'))
+    def cache_counters(rows):
+        return {field:None if any(row['usage'].get(field) is None for row in rows) else sum(row['usage'].get(field,0) for row in rows)
+                for field in ('cached_input','cache_write_input')}
+    def compatible(a,b):
+        return all(a.get(field) is None or b.get(field) is None or a[field]==b[field]
+                   for field in ('prompt','completion','cached_input','cache_write_input'))
+    for key,rows in groups.items():
+        direct=[row for row in rows if row.get('source_kind','direct')=='direct']
+        cumulative=[row for row in rows if row.get('source_kind')=='cumulative']
+        strategy='single_source';chosen=rows
+        if any(row.get('source_kind')=='cumulative' and row.get('identity_version')!=2 for row in rows):
+            issues.append('legacy_cumulative_identity_needs_review')
+        if direct and cumulative:
+            response_key=lambda row:(row.get('provider','unknown'),row.get('response_id'))
+            ids={response_key(row):row for row in direct if row.get('response_id')}
+            cumulative_ids={}
+            for row in cumulative:
+                if row.get('response_id'):cumulative_ids.setdefault(response_key(row),[]).append(row)
+            def combined_usage(values):
+                prompt,completion=counters(values)
+                return dict(prompt=prompt,completion=completion,**cache_counters(values))
+            # Some hosts publish several monotonic checkpoints for one response.
+            # Compare their combined increments with its direct usage, not each
+            # checkpoint delta in isolation.
+            conflict=any(not compatible(combined_usage(values),ids[identifier]['usage'])
+                         for identifier,values in cumulative_ids.items() if identifier in ids)
+            if conflict:
+                issues.append('conflicting_usage_streams')
+            starts={row.get('session_started_at') for row in cumulative}
+            start=next(iter(starts)) if len(starts)==1 else None
+            end=max((row.get('occurred_at') for row in cumulative if row.get('occurred_at') is not None),default=None)
+            covered=(start is not None and end is not None and all(
+                row.get('occurred_at') is not None and start<=row['occurred_at']<=end and
+                row.get('session_started_at')==start and not row.get('forked') for row in direct+cumulative))
+            has_exact_ids=all(row.get('response_id') for row in cumulative)
+            unmatched_direct=[row for row in direct if not row.get('response_id') or response_key(row) not in
+                              cumulative_ids]
+            # A cumulative response label is still a session prefix, not proof
+            # that its whole amount is disjoint from earlier direct responses.
+            distinct_after_window=(end is not None and all(row.get('occurred_at') is not None and row['occurred_at']>end for row in unmatched_direct))
+            window_matches=covered and counters(direct)==counters(cumulative)
+            identities={(row.get('provider','unknown'),row.get('model','unknown')) for row in rows}
+            if len(identities)>1:
+                # The cumulative total is still useful session evidence, but its
+                # model allocation cannot be reconstructed from a later label.
+                issues.append('cumulative_model_or_provider_allocation_unknown')
+                has_exact_ids=False;window_matches=False
+            if not has_exact_ids and window_matches and not compatible(cache_counters(direct),cache_counters(cumulative)):
+                if not conflict:issues.append('conflicting_usage_streams')
+                conflict=True
+            if not conflict and has_exact_ids and distinct_after_window:
+                chosen=direct+[row for row in cumulative if response_key(row) not in ids]
+                strategy='direct_and_distinct_response_ids'
+            elif not conflict and window_matches:
+                chosen=direct;strategy='direct_matches_cumulative_window'
+            else:
+                # Retain unmatched cumulative evidence for review, but do not
+                # fabricate request mappings or charge the two streams twice.
+                chosen=direct
+                strategy='direct_preferred_unresolved_overlap'
+                issues.append('usage_stream_coverage_unresolved')
+        selected.extend(chosen)
+        lower=max(tokens(chosen),tokens(cumulative)) if strategy=='direct_preferred_unresolved_overlap' else tokens(chosen)
+        lower_bound+=lower
+        providers=sorted({row.get('provider','unknown') for row in rows});models=sorted({row.get('model','unknown') for row in rows})
+        summaries.append(dict(session_id=key[1],provider=providers[0] if len(providers)==1 else 'mixed',
+                              model=models[0] if len(models)==1 else 'mixed',providers=providers,models=models,strategy=strategy,
+                              direct_tokens=tokens(direct) if direct else None,
+                              cumulative_tokens=tokens(cumulative) if cumulative else None,
+                              direct_cache_counters=cache_counters(direct) if direct else None,
+                              cumulative_cache_counters=cache_counters(cumulative) if cumulative else None,
+                              counted_tokens=tokens(chosen),known_token_lower_bound=lower))
+    return selected,summaries,sorted(set(issues)),lower_bound
+
+
 class Evaluation:
     def __init__(self, store):
         self.store = store
@@ -132,15 +239,16 @@ class Evaluation:
     def _consumption(self, db, experiment_id):
         requests = self._requests(db, experiment_id)
         trials = self._trials(db, experiment_id)
-        main_tokens = 0
+        events=[]
         for row in db.execute('SELECT e.payload FROM evaluation_usage_events e JOIN evaluation_trials t ON t.id=e.trial_id WHERE t.experiment_id=?',(experiment_id,)):
             event = json.loads(row[0])
-            if event['attributable'] and event['usage']:
-                main_tokens += event['usage']['total']
+            events.append(event)
+        _,_,main_issues,main_tokens=main_usage_selection(events)
         return dict(charged_external_tokens=sum(r['charged_tokens'] for r in requests),
                     charged_external_cost=format(sum((money(r['charged_cost']) for r in requests),Decimal(0)),'f') if all(r['charged_cost'] is not None for r in requests) else None,
                     requests=len(requests), unsettled=sum(r['state']!='settled' for r in requests), usage_gaps=sum(r['gap'] for r in requests),
-                    started_trials=sum('started_at' in t for t in trials), main_reported_tokens=main_tokens)
+                    started_trials=sum('started_at' in t for t in trials), main_reported_tokens=main_tokens,
+                    main_usage_stream_gaps=len(main_issues))
 
     def create_experiment(self, name, conditions, cases=None):
         """Freeze precise model/settings/environment identities, never provider credentials."""
@@ -296,10 +404,12 @@ class Evaluation:
         return trial
 
     def bind_session(self, trial_id, session_id, root_session_id, client_kind, confirmed=False, forked=False, related_sessions=None):
-        if confirmed is not True or not session_id or not root_session_id or client_kind not in {'desktop', 'cli', 'local_substitute'}:
+        if confirmed is not True or any(not isinstance(s,str) or not s.strip() or len(s)>256 for s in (session_id,root_session_id)) or client_kind not in {'desktop', 'cli', 'local_substitute'}:
             raise ValueError('explicit root/session/client binding is required')
+        if related_sessions is not None and not isinstance(related_sessions,list):
+            raise ValueError('related sessions must be session IDs in a list')
         related = sorted(set(related_sessions or []))
-        if any(not isinstance(s, str) or not s for s in related):
+        if any(not isinstance(s, str) or not s.strip() or len(s)>256 for s in related):
             raise ValueError('invalid related session')
         binding = dict(session_id=session_id, root_session_id=root_session_id, client_kind=client_kind,
                        confirmed_at=time.time(), forked=bool(forked), related_sessions=related)
@@ -310,11 +420,35 @@ class Evaluation:
                 raise ValueError('bind once after the trial starts')
             for row in db.execute('SELECT payload FROM evaluation_trials'):
                 other = json.loads(row[0]).get('binding')
-                if other and ({session_id, *related} & {other['session_id'], *other['related_sessions']}):
+                if other and (owned_sessions(binding)&owned_sessions(other)):
                     raise ValueError('session already bound to another trial')
             trial['binding'] = binding
             self._put(db, 'evaluation_trials', trial)
         return binding
+
+    def add_related_sessions(self,trial_id,related_sessions,confirmed=False):
+        """Explicitly extend attribution without replacing the primary binding."""
+        if confirmed is not True:
+            raise ValueError('explicit confirmation is required for related sessions')
+        if not isinstance(related_sessions,list) or any(not isinstance(s,str) or not s.strip() or len(s)>256 for s in related_sessions):
+            raise ValueError('related sessions must be bounded, nonempty session IDs')
+        with self.store.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            trial=self._get(db,'evaluation_trials',trial_id)
+            binding=trial.get('binding')
+            if not binding or trial['state'] not in {'running','ended'}:
+                raise ValueError('related sessions require an existing started-trial binding')
+            requested=set(related_sessions)-{binding['session_id']}
+            for row in db.execute('SELECT payload FROM evaluation_trials WHERE id<>?',(trial_id,)):
+                other=json.loads(row[0]).get('binding')
+                if other and requested & owned_sessions(other):
+                    raise ValueError('session already bound to another trial')
+            added=sorted(requested-set(binding['related_sessions']))
+            if added:
+                binding['related_sessions']=sorted(set(binding['related_sessions'])|requested)
+                trial.setdefault('binding_extensions',[]).append(dict(id=uuid.uuid4().hex,confirmed_at=time.time(),added_sessions=added))
+                self._put(db,'evaluation_trials',trial)
+        return dict(trial_id=trial_id,binding=binding,added_sessions=added)
 
     def attach_run(self, trial_id, group_id, run_id, backend_id, workspace=None, model=None, provider_revision=None, reasoning=None):
         with self.store.connect() as db:
@@ -459,13 +593,21 @@ class Evaluation:
         return value
 
     def record_main_usage(self, trial_id, event_id, session_id, root_session_id, usage, source_fingerprint,
-                          quality='reported', forked=False, missing=False, model=None, provider=None):
+                          quality='reported', forked=False, missing=False, model=None, provider=None, occurred_at=None,
+                          source_kind='direct',response_id=None,session_started_at=None,identity_version=2):
         """Explicit counter-only import; no inference from time windows and no message bodies."""
         if not event_id or not source_fingerprint or quality not in {'reported', 'cumulative_delta', 'identity_inferred', 'identity_unknown'}:
             raise ValueError('usage source and quality required')
+        for stamp in (occurred_at,session_started_at):
+            if stamp is not None and (isinstance(stamp,bool) or not isinstance(stamp,(int,float)) or not math.isfinite(stamp)):
+                raise ValueError('usage timestamp must be finite')
+        if source_kind not in {'direct','cumulative'} or response_id is not None and not isinstance(response_id,str):
+            raise ValueError('invalid usage source identity')
         value = dict(id=event_id, trial_id=trial_id, session_id=session_id, root_session_id=root_session_id,
                      usage=normalize_usage(usage), source_fingerprint=source_fingerprint, quality=quality,
-                     forked=bool(forked), missing=bool(missing), model=model or 'unknown', provider=provider or 'unknown')
+                     forked=bool(forked), missing=bool(missing), model=model or 'unknown', provider=provider or 'unknown',
+                     occurred_at=occurred_at,source_kind=source_kind,response_id=response_id,session_started_at=session_started_at,
+                     identity_version=identity_version)
         with self.store.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             trial = self._get(db, 'evaluation_trials', trial_id)
@@ -490,26 +632,29 @@ class Evaluation:
                 issues.append('fork_inheritance')
             if missing or value['usage'] is None:
                 issues.append('missing_usage')
-            if quality != 'reported':
+            if quality not in {'reported','cumulative_delta'}:
                 issues.append(quality)
             old = db.execute('SELECT trial_id,payload FROM evaluation_usage_events WHERE id=?', (event_id,)).fetchone()
             if old:
-                # Do not double count; retain a visible coverage warning even for identical re-import.
+                previous=json.loads(old[1])
+                fields=('trial_id','session_id','root_session_id','usage','quality','forked','missing','model','provider','attributable','occurred_at','response_id','session_started_at')
+                if all(previous.get(key)==value.get(key) for key in fields) and previous.get('source_kind','direct')==source_kind:
+                    # A file fingerprint changes when the same session log grows.
+                    # Re-reading an unchanged event is ordinary idempotent import.
+                    return {'recorded':False,'duplicate':True,'idempotent':True}
+                # Reused response IDs with different counters/session/time are
+                # genuinely ambiguous. Preserve the first count and the warning.
                 issues.append('duplicate_usage_event')
+                issues.append('conflicting_usage_event')
                 self._put(db, 'evaluation_trials', trial)
                 if old[0] != trial_id:
                     other = self._get(db, 'evaluation_trials', old[0])
                     other['measurement_issues'].append('cross_trial_usage_event')
                     self._put(db, 'evaluation_trials', other)
-                return {'recorded': False, 'duplicate': True}
+                return {'recorded': False, 'duplicate': True,'idempotent':False,'conflicting':True}
             db.execute('INSERT INTO evaluation_usage_events VALUES (?,?,?)', (event_id, trial_id, json.dumps(value)))
             self._put(db, 'evaluation_trials', trial)
-            totals = 0
-            for other in self._trials(db, exp['id']):
-                for row in db.execute('SELECT payload FROM evaluation_usage_events WHERE trial_id=?', (other['id'],)):
-                    event = json.loads(row[0])
-                    if event['attributable'] and event['usage']:
-                        totals += event['usage']['total']
+            totals=self._consumption(db,exp['id'])['main_reported_tokens']
             if exp['authorization'] and totals >= exp['authorization']['caps']['main_tokens']:
                 exp.update(state='needs_review', main_limit_notice='observed main-model limit reached; host controls in-flight requests')
                 self._put(db, 'evaluation_experiments', exp)
@@ -533,50 +678,84 @@ class Evaluation:
             raise ValueError('log import requires an authorized, explicitly chosen directory')
         if not binding or confirmed_session_id not in {binding['session_id'], *binding['related_sessions']}:
             raise ValueError('confirm an explicitly bound session before importing')
-        if source.stat().st_size > 16 * 1024 * 1024:
-            raise ValueError('log exceeds bounded import size; preserve a missing-usage observation')
-        state, offset, added, issues = {}, 0, 0, []
-        fingerprint = file_hash(source)
+        with self.store.connect() as db:
+            previous=[json.loads(row[0]) for row in db.execute('SELECT payload FROM evaluation_usage_events WHERE trial_id=?',(trial_id,))]
+        if any(row.get('source_kind')=='cumulative' and row.get('identity_version')!=2 for row in previous):
+            raise ValueError('LEGACY_CUMULATIVE_IDENTITY: retain this trial and prepare a new identity before re-importing')
+        snapshot_size=source.stat().st_size
+        state, offset, added, unchanged, issues = {}, 0, 0, 0, []
+        fingerprint = file_hash(source,snapshot_size)
+        consumed_hash=hashlib.sha256();deferred_tail=False
         with source.open('rb') as stream:
-            for raw in stream:
-                if len(raw) > 1024 * 1024:
+            while offset<snapshot_size:
+                beginning=offset
+                raw=stream.readline(min(LOG_LINE_BYTES+1,snapshot_size-offset))
+                if not raw:break
+                consumed_hash.update(raw);offset+=len(raw)
+                if len(raw) > LOG_LINE_BYTES:
                     issues.append('oversized_log_line')
-                    offset += len(raw)
+                    while offset<snapshot_size and not raw.endswith(b'\n'):
+                        raw=stream.readline(min(65536,snapshot_size-offset))
+                        if not raw:break
+                        consumed_hash.update(raw);offset+=len(raw)
                     continue
                 try:
                     event = json.loads(raw)
+                except (json.JSONDecodeError,UnicodeDecodeError):
+                    if offset==snapshot_size and not raw.endswith(b'\n'):
+                        deferred_tail=True
+                    else:
+                        issues.append('invalid_log_line')
+                    continue
+                try:
                     if not isinstance(event, dict):
                         raise ValueError('invalid log event')
-                    result = event_record(event, state, str(source), offset)
+                    result = event_record(event, state, str(source), beginning,include_cumulative=True)
                 except (ValueError, TypeError, AttributeError):
                     issues.append('invalid_log_line')
                     result = None
-                offset += len(raw)
                 if result:
-                    key, _, _, value = result
-                    observed = state.get('thread')
+                    key, at, source_kind, value = result
+                    # Keep both telemetry streams; selection never double-adds
+                    # their overlapping counters. Direct request IDs stay stable.
+                    key=('cumulative:'+key) if source_kind=='cumulative' else key
+                    observed=event.get('payload',{}).get('thread_id') or state.get('thread')
+                    if not isinstance(observed,str):observed='unknown'
                     if observed != confirmed_session_id:
                         issues.append('mixed_log_session')
                     recorded = self.record_main_usage(trial_id, key, observed, binding['root_session_id'],
                         {k: value.get(k) for k in ('prompt', 'completion', 'cached_input', 'cache_write_input')},
-                        fingerprint, quality=value['quality'], forked=state.get('fork', False), model=value['model'], provider=value['provider'])
+                        fingerprint, quality=value['quality'], forked=state.get('fork', False), model=value['model'], provider=value['provider'],
+                        occurred_at=at,source_kind=source_kind,response_id=value.get('response_id'),session_started_at=value.get('session_started_at'),
+                        identity_version=value.get('identity_version',1))
                     added += recorded['recorded']
-        if file_hash(source) != fingerprint:
+                    unchanged += recorded.get('idempotent',False)
+        try:
+            prefix_unchanged=source.stat().st_size>=snapshot_size and file_hash(source,snapshot_size)==fingerprint
+        except OSError:
+            prefix_unchanged=False
+        if offset!=snapshot_size or consumed_hash.hexdigest()!=fingerprint or not prefix_unchanged:
             issues.append('log_changed_during_import')
         for key in ('invalid', 'resets', 'fork_replayed', 'fork_baselines'):
             if state.get(key):
                 issues.append('log_' + key)
         if state.get('fork'):
             issues.append('fork_inheritance')
-        if not added:
-            issues.append('no_new_usage_in_log')
-        if issues:
-            with self.store.connect() as db:
-                db.execute('BEGIN IMMEDIATE')
-                current = self._get(db, 'evaluation_trials', trial_id)
-                current['measurement_issues'] = sorted(set(current['measurement_issues'] + issues))
-                self._put(db, 'evaluation_trials', current)
-        return dict(records_added=added, source_fingerprint=fingerprint, issues=sorted(set(issues)))
+        with self.store.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            current=self._get(db,'evaluation_trials',trial_id)
+            current['measurement_issues']=sorted(set(current['measurement_issues']+issues))
+            source_id=digest(os.path.normcase(str(source)))
+            current.setdefault('log_imports',{})[source_id]=dict(source_fingerprint=fingerprint,source_bytes=snapshot_size,
+                deferred_tail=deferred_tail,session_id=confirmed_session_id,observed_at=time.time())
+            self._put(db,'evaluation_trials',current)
+            main=[json.loads(row[0]) for row in db.execute('SELECT payload FROM evaluation_usage_events WHERE trial_id=?',(trial_id,))]
+        _,streams,stream_issues,_=main_usage_selection(main)
+        pending_issues=['log_tail_pending'] if any(info['deferred_tail'] for info in current.get('log_imports',{}).values()) else []
+        return dict(records_added=added,records_unchanged=unchanged,source_fingerprint=fingerprint,
+                    issues=sorted(set(current['measurement_issues']+stream_issues+pending_issues)),usage_streams=streams,
+                    source_bytes=snapshot_size,deferred_tail=deferred_tail,
+                    status='imported' if added else 'unchanged' if unchanged else 'no_usage_records_yet')
 
     def finish_trial(self, trial_id, outcome, not_delegated_reason=None, timings=None, first_run_passed=False):
         if outcome not in TRIAL_ENDINGS:
@@ -592,8 +771,8 @@ class Evaluation:
             trial = self._get(db, 'evaluation_trials', trial_id)
             if trial['state'] != 'running':
                 raise ValueError('trial must be running')
-            if outcome == 'not_delegated' and trial['runs']:
-                raise ValueError('an attached run cannot be reported as not delegated')
+            if outcome == 'not_delegated' and db.execute('SELECT 1 FROM evaluation_requests WHERE trial_id=? LIMIT 1',(trial_id,)).fetchone():
+                raise ValueError('a provider request was admitted; cannot report no delegation without resolving its send evidence')
             trial.update(state='ended', outcome=outcome, finished_at=time.time(), timings=timings,
                          not_delegated_reason=not_delegated_reason, first_run_passed=bool(first_run_passed))
             self._put(db, 'evaluation_trials', trial)
@@ -669,6 +848,9 @@ class Evaluation:
             {'tool': 'record_task_verification', 'params': {'job_id': '<job_id>', 'passed': '<true only after independent checks>',
              'evidence': '<actual file/test/source evidence>', 'checkpoint_id': '<current checkpoint_id>',
              'checkpoint_sha256': '<current sha256>', 'disposition': '<verified_complete, verified_partial or needs_more_evidence>'}}]
+        for step in steps:
+            if step['tool']!='bind_client_session':
+                step['params']['client_binding_id']='<id returned by bind_client_session>'
         return dict(trial_id=trial_id, experiment_id=exp['id'], workspace=trial['workspace'], task=case['task'],
                     group=trial['group'], backend_id=trial['backend_id'], input_sha256=trial['input_sha256'],
                     client_binding_steps=steps,
@@ -676,6 +858,7 @@ class Evaluation:
                     'B/C: selected backend, fixed provider/model/reasoning; independently inspect artifacts. '
                     'Before group creation, bind this same root/session to the trial via Evaluation.bind_session. '
                     'Always pass experiment_id, trial_id and client_binding_id in create_task_group, then reuse its group_id. '
+                    'Pass this same client_binding_id to start, status/result, group/checkpoint reads, verification, recovery acknowledgements and resume. '
                     'Do not alter the frozen scorer. Daily settings require separate authorization.')
 
     def report(self, experiment_id):
@@ -688,6 +871,11 @@ class Evaluation:
             for trial in desc['trials']:
                 events[trial['id']] = [json.loads(r[0]) for r in db.execute('SELECT payload FROM evaluation_usage_events WHERE trial_id=?', (trial['id'],))]
             engine_runs = {}
+            session_owners={}
+            for row in db.execute('SELECT id,payload FROM evaluation_trials'):
+                bound=json.loads(row[1]).get('binding')
+                if bound:
+                    for session in owned_sessions(bound):session_owners.setdefault(session,set()).add(row[0])
             for trial in desc['trials']:
                 valid = []
                 for reference in trial['runs']:
@@ -704,9 +892,16 @@ class Evaluation:
         for trial in desc['trials']:
             selected = [r for r in requests if r['trial_id'] == trial['id']]
             main = events[trial['id']]
+            counted_main,main_streams,stream_issues,main_lower_bound=main_usage_selection(main)
             binding = trial['binding']
             issues = sorted(set(trial['measurement_issues']))
-            if selected or trial['runs']:
+            issues.extend(stream_issues)
+            if binding and any(len(session_owners.get(session,set()))>1 for session in owned_sessions(binding)):
+                issues.append('shared_client_session_across_trials')
+            if any(info['deferred_tail'] for info in trial.get('log_imports',{}).values()):
+                issues.append('log_tail_pending')
+            no_external_request=trial.get('outcome')=='not_delegated' and not selected
+            if selected or trial['runs'] and not no_external_request:
                 for key in ('external_model', 'external_provider_revision', 'external_reasoning'):
                     if conditions.get(key) in {None, 'unknown'}:
                         issues.append(key + '_unknown')
@@ -727,7 +922,7 @@ class Evaluation:
                 issues.append('missing_main_usage')
             if any(r['gap'] for r in selected):
                 issues.append('external_request_usage_gap')
-            if trial['runs'] and not selected:
+            if trial['runs'] and not selected and not no_external_request:
                 issues.append('external_requests_not_recorded')
             if len(engine_runs[trial['id']]) != len(trial['runs']):
                 issues.append('unverified_or_stale_engine_run_reference')
@@ -742,7 +937,7 @@ class Evaluation:
                     score_valid = file_hash(score['answer_reference']['path']) == score['answer_reference']['sha256']
             except (OSError, ValueError):
                 score_valid = False
-            main_usage = [e['usage'] for e in main if e['attributable'] and e['usage']]
+            main_usage = [e['usage'] for e in counted_main]
             ext_usage = [r['usage'] for r in selected if r['usage']]
             main_cost = sum_costs(main_usage, conditions['main_price'])
             if any(issue.startswith(('main_model_', 'main_provider_')) for issue in issues):
@@ -760,9 +955,10 @@ class Evaluation:
                        first_run_passed=delegated and score_valid and score['passed'] and len(trial['runs']) == 1 and trial['outcome'] != 'completed_by_parent',
                        not_delegated_reason=trial.get('not_delegated_reason'),
                        binding=binding, runs=trial['runs'], score=score, score_valid=score_valid,
-                       quality_passed=score_valid and score['passed'], coverage={'attributable': bool(binding) and not any(x in issues for x in ('unbound_or_mixed_session', 'fork_inheritance', 'cross_trial_usage_event')),
+                       quality_passed=score_valid and score['passed'], coverage={'attributable': bool(binding) and not any(x in issues for x in ('unbound_or_mixed_session', 'fork_inheritance', 'cross_trial_usage_event','shared_client_session_across_trials')),
                        'usage_complete': complete, 'priced': total is not None, 'independently_scored': score_valid, 'issues': sorted(set(issues))},
-                       main_tokens=sum(u['total'] for u in main_usage) if main_usage else None,
+                       main_tokens=main_lower_bound if main_usage else None,main_usage_streams=main_streams,
+                       main_tokens_basis='reported_lower_bound' if stream_issues else 'reported',
                        main_model_provenance=[{'model': model, 'provider': provider} for model, provider in sorted({(e.get('model','unknown'),e.get('provider','unknown')) for e in main})],
                        external_reported_tokens=sum(u['total'] for u in ext_usage) if ext_usage else None,
                        main_reference_estimate=main_cost, external_reference_estimate=external_cost,
@@ -882,7 +1078,7 @@ def distribution(values):
 def dispatch(store, action, params):
     """Explicit RPC surface. Polling snapshots do not load experiments or reports."""
     allowed = {'create_experiment', 'prepare_experiment', 'describe', 'authorization_preview', 'authorize', 'start_trial',
-               'bind_session', 'finish_trial', 'score_trial', 'report', 'set_state', 'trial_instruction', 'record_main_usage', 'import_main_log'}
+               'bind_session', 'add_related_sessions', 'finish_trial', 'score_trial', 'report', 'set_state', 'trial_instruction', 'record_main_usage', 'import_main_log'}
     if action not in allowed:
         raise ValueError('unsupported evaluation action')
     return getattr(Evaluation(store), action)(**params)
@@ -891,7 +1087,7 @@ def dispatch(store, action, params):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--state', required=True, help='explicit isolated state directory')
-    parser.add_argument('action', choices=['create', 'prepare', 'describe', 'instruction', 'preview-authorization', 'authorize', 'start', 'bind', 'attach-run', 'finish', 'score', 'report', 'state', 'main-usage', 'import-main-log'])
+    parser.add_argument('action', choices=['create', 'prepare', 'describe', 'instruction', 'preview-authorization', 'authorize', 'start', 'bind', 'add-related', 'attach-run', 'finish', 'score', 'report', 'state', 'main-usage', 'import-main-log'])
     parser.add_argument('--params', required=True, help='JSON object file; no credentials or transcripts')
     parser.add_argument('--output', help='optional output JSON file')
     args = parser.parse_args(argv)
@@ -900,7 +1096,7 @@ def main(argv=None):
     params = json.loads(Path(args.params).read_text(encoding='utf-8-sig'))
     methods = {'create': 'create_experiment', 'prepare': 'prepare_experiment', 'describe': 'describe', 'instruction': 'trial_instruction',
                'preview-authorization': 'authorization_preview', 'authorize': 'authorize', 'start': 'start_trial',
-               'bind': 'bind_session', 'attach-run': 'attach_run', 'finish': 'finish_trial', 'score': 'score_trial',
+               'bind': 'bind_session', 'add-related':'add_related_sessions', 'attach-run': 'attach_run', 'finish': 'finish_trial', 'score': 'score_trial',
                'report': 'report', 'state': 'set_state', 'main-usage': 'record_main_usage', 'import-main-log': 'import_main_log'}
     result = getattr(evaluation, methods[args.action])(**params)
     output = json.dumps(result, indent=2, ensure_ascii=False, allow_nan=False)

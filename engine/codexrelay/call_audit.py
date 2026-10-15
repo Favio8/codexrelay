@@ -58,9 +58,9 @@ def install_call_audit(mcp, relay):
                 tool=name, success=success, arguments=arguments, result=payload)
         except Exception:
             stages.append('client_call_ledger')
-        if observation and observation.get('client_binding_id'):
+        if observation and observation.get('caller_binding_id'):
             try:
-                binding = client_evidence.get_binding(relay.store, observation['client_binding_id'], relay.workspace)
+                binding = client_evidence.get_binding(relay.store, observation['caller_binding_id'], relay.workspace, relay.instance)
                 if binding['instance'] == relay.instance:
                     identity = dict(client_kind={'desktop':'codex_desktop','cli':'codex_cli','local_stdio':'local_stdio_fixture',
                         'app_self_test':'app_self_test'}.get(binding['client_kind'], 'unknown'),

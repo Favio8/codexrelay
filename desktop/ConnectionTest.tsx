@@ -5,8 +5,8 @@ import DetailsSummary from './DetailsSummary';
 import { useNotifications } from './Notifications';
 
 interface TestResult {ok:boolean;model:string;verification:'quick'|'full'|'backend';tool_roundtrip:boolean;elapsed_ms:number;backend_verified?:boolean;current_revision?:boolean}
-interface Props {method:'test_provider'|'test_backend';params:Record<string,unknown>;identityKey?:string;disabled?:boolean;compact?:boolean;onChanged?:()=>void;onBusyChange?:(busy:boolean)=>void;children?:ReactNode}
-export default function ConnectionTest({method,params,identityKey,disabled=false,compact=false,onChanged,onBusyChange,children}:Props) {
+interface Props {method:'test_provider'|'test_backend';params:Record<string,unknown>;identityKey?:string;disabled?:boolean;backendDisabled?:boolean;compact?:boolean;onChanged?:()=>void;onBusyChange?:(busy:boolean)=>void;children?:ReactNode}
+export default function ConnectionTest({method,params,identityKey,disabled=false,backendDisabled=false,compact=false,onChanged,onBusyChange,children}:Props) {
  const [mode,setMode]=useState<'quick'|'full'|'backend'|null>(null),[elapsed,setElapsed]=useState(0),[error,setError]=useState(''),[details,setDetails]=useState('');
  const mounted=useRef(false),inFlight=useRef(false),started=useRef(0),{notify,dismiss}=useNotifications();
  const identity=JSON.stringify({params,identityKey});
@@ -15,7 +15,7 @@ export default function ConnectionTest({method,params,identityKey,disabled=false
  useEffect(()=>{setError('');setDetails('');},[identity]);
  useEffect(()=>{if(!mode)return;const timer=setInterval(()=>setElapsed(Math.floor((performance.now()-started.current)/1000)),250);return()=>clearInterval(timer);},[mode]);
  const run=async(verification:'quick'|'full'|'backend')=>{
-  if(disabled||inFlight.current)return;
+  if(disabled||inFlight.current||(verification==='backend'&&backendDisabled))return;
   inFlight.current=true;dismiss();started.current=performance.now();setMode(verification);setElapsed(0);setError('');setDetails('');onBusyChange?.(true);
   const requestIdentity=identity,probeId=crypto.randomUUID();activeProbe.current=probeId;
   try {
@@ -39,7 +39,7 @@ export default function ConnectionTest({method,params,identityKey,disabled=false
    <button className={compact?'icon-btn':'text-btn'} aria-label="完整工具验证" title="模型工具协议验证：合成工具往返，最多 45 秒，不验证执行后端" disabled={disabled||!!mode} onClick={()=>void run('full')}>
     {mode==='full'?<LoaderCircle size={16} className="spin"/>:<ShieldCheck size={16}/>}{!compact&&(mode==='full'?'正在验证…':'完整工具验证')}
    </button>
-   {method==='test_backend'&&<button className="text-btn" aria-label="执行后端验证" title="所选执行后端实际读取隔离文件中的随机标记，最多 45 秒" disabled={disabled||!!mode} onClick={()=>void run('backend')}>
+   {method==='test_backend'&&<button className="text-btn" aria-label="执行后端验证" title={backendDisabled?'所选执行后端未安装，仍可测试模型连接和工具协议':'所选执行后端实际读取隔离文件中的随机标记，最多 45 秒'} disabled={disabled||backendDisabled||!!mode} onClick={()=>void run('backend')}>
     {mode==='backend'?<LoaderCircle size={16} className="spin"/>:<ShieldCheck size={16}/>}{mode==='backend'?'正在验证…':'执行后端验证'}
    </button>}
    {children}

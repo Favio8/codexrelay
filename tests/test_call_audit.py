@@ -69,6 +69,33 @@ class CallAuditTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('evidence_gap',str(result))
         self.assertEqual(self.calls,1)
 
+    async def test_task_owner_does_not_upgrade_an_unknown_or_different_caller(self):
+        owner=client_evidence.bind(self.store,instance=self.relay.instance,workspace=self.workspace,
+            session_id='owner-chat',root_session_id='owner-chat',client_kind='desktop',confirmed=True)
+        caller=client_evidence.bind(self.store,instance=self.relay.instance,workspace=self.workspace,
+            session_id='reader-chat',root_session_id='reader-chat',client_kind='cli',confirmed=True)
+        with self.store.connect() as db:
+            db.execute('INSERT INTO task_groups VALUES (?,?)',('owned-group',json.dumps({'group_id':'owned-group','client_binding_id':owner['id']})))
+        @self.mcp.tool()
+        def get_task_group(group_id:str,client_binding_id:str|None=None) -> str:
+            return json.dumps({'group_id':group_id,'client_binding_id':owner['id']})
+        unbound=await self.mcp._tool_manager.call_tool('get_task_group',{'group_id':'owned-group'},convert_result=True)
+        self.assertEqual(decoded(unbound)['group_id'],'owned-group')
+        first=client_evidence.chain(self.store,workspace=self.workspace)['calls'][-1]
+        self.assertEqual(first['owner_binding_id'],owner['id'])
+        self.assertIsNone(first['caller_binding_id'])
+        unbound_observation=self.store.setting(integration_evidence.CALLS_KEY)[-1]
+        self.assertEqual(unbound_observation['client_kind'],'unknown')
+        self.assertIsNone(unbound_observation['client_session_id'])
+        bound=await self.mcp._tool_manager.call_tool('get_task_group',{'group_id':'owned-group','client_binding_id':caller['id']},convert_result=True)
+        self.assertEqual(decoded(bound)['group_id'],'owned-group')
+        second=client_evidence.chain(self.store,workspace=self.workspace)['calls'][-1]
+        self.assertEqual(second['owner_binding_id'],owner['id'])
+        self.assertEqual(second['caller_binding_id'],caller['id'])
+        bound_observation=self.store.setting(integration_evidence.CALLS_KEY)[-1]
+        self.assertEqual(bound_observation['client_kind'],'codex_cli')
+        self.assertEqual(bound_observation['client_session_id'],'reader-chat')
+
 
 if __name__=='__main__':
     unittest.main()

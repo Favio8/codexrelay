@@ -10,6 +10,7 @@ from .integration import codex_dir
 from .usage import daily_window, estimate, amount, add_bounds, validate_price, bump_revision
 
 SCAN_BYTES = 16 * 1024 * 1024
+PARSER_VERSION = 2
 
 
 def schema(db):
@@ -74,7 +75,7 @@ def counters(value):
     return dict(zip(names,values))
 
 
-def event_record(event,state,path,offset):
+def event_record(event,state,path,offset, *, include_cumulative=False):
     kind=event.get('type');payload=event.get('payload') or {}
     if not isinstance(payload,dict):
         return None
@@ -110,7 +111,7 @@ def event_record(event,state,path,offset):
         raw_count=payload.get('usage')
         count=counters(raw_count)
     else:
-        if state.get('direct'):
+        if state.get('direct') and not include_cumulative:
             state['skipped_cumulative']=state.get('skipped_cumulative',0)+1
             return None
         info=payload.get('info') or {}
@@ -143,19 +144,26 @@ def event_record(event,state,path,offset):
     provider=provider if isinstance(provider,str) else 'unknown'
     model=model if isinstance(model,str) else 'unknown'
     response=payload.get('response_id')
-    if response:
+    if response and direct:
         identity=['response',provider,response]
     elif state.get('thread'):
         # Copied rollouts and replay prefixes retain their event timestamp/counters.
-        identity=['event',payload.get('thread_id') or state['thread'],event.get('timestamp'),count,model]
-        quality='identity_inferred'
+        # A cumulative checkpoint, rather than its delta, distinguishes two
+        # equally-sized responses recorded within one timestamp resolution.
+        identity=['event',payload.get('thread_id') or state['thread'],event.get('timestamp'),
+                  count if direct else state['cumulative'],model]
+        # A monotonic cumulative chain has exact reported totals even when the
+        # host does not assign a response ID. Forks/resets retain separate gaps.
+        quality='identity_inferred' if direct else 'cumulative_delta'
     else:
         identity=['file',path,offset]
         quality='identity_unknown'
     key=hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()
     return key,at,'direct' if direct else 'cumulative',dict(occurred_at=at,model=model,provider=provider,
         prompt=count['input_tokens'],cached_input=count['cached_input_tokens'] if 'cached_input_tokens' in raw_count else None,completion=count['output_tokens'],
-        cache_write_input=count['cache_write_input_tokens'],quality=quality)
+        cache_write_input=count['cache_write_input_tokens'],quality=quality,
+        response_id=response if isinstance(response,str) else None,
+        session_started_at=state.get('fork_cutoff'),identity_version=PARSER_VERSION)
 
 
 def _drop_sources(db,path,kind=None):
@@ -193,9 +201,11 @@ def scan(store, config):
             stat=file.stat();identity=f'{stat.st_dev}:{stat.st_ino}'
             with store.connect() as db:
                 row=db.execute('SELECT * FROM codex_usage_files WHERE path=?',(name,)).fetchone()
-            reset=not row or row['identity']!=identity or stat.st_size<row['offset'] or (stat.st_size==row['offset'] and stat.st_mtime_ns!=row['modified'])
+            saved_state=json.loads(row['state']) if row else {}
+            reset=not row or saved_state.get('parser_version')!=PARSER_VERSION or row['identity']!=identity or stat.st_size<row['offset'] or (stat.st_size==row['offset'] and stat.st_mtime_ns!=row['modified'])
             offset=0 if reset else row['offset']
-            state={} if reset else json.loads(row['state'])
+            state={} if reset else saved_state
+            state['parser_version']=PARSER_VERSION
             if row and not reset and offset==stat.st_size:
                 continue
             if status['bytes_read']>=SCAN_BYTES or time.monotonic()>=deadline:
@@ -289,6 +299,7 @@ def today(store,now=None):
         for row in db.execute('SELECT state FROM codex_usage_files'):
             state=json.loads(row[0])
             versions.add(state.get('cli_version','unknown'))
+            if state.get('parser_version')!=PARSER_VERSION:coverage['legacy_parser_pending']+=1
             for field in ('invalid','resets','fork_baselines','fork_replayed','skipped_cumulative','conflicting','oversized_lines'):
                 coverage[field]+=state.get(field,0)
     totals['total']=totals['prompt']+totals['completion']

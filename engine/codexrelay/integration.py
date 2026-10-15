@@ -231,6 +231,15 @@ def _repair_data(store, codex_home=None, capability_scope="full", remove_denials
             entry["default_tools_approval_mode"] = "writes"
             servers["codexrelay"] = entry
             changes.append({"target": "config.toml:mcp_servers.codexrelay", "operation": "register_owned_runtime"})
+            if capability_scope == "basic":
+                entry["enabled_tools"] = list(required)
+                additions.extend(required)
+                changes.append({"target": "config.toml:mcp_servers.codexrelay.enabled_tools", "operation": "initialize_basic_allowlist", "tools": list(required)})
+        elif not same_executable(entry.get("command", ""), sys.executable):
+            previous_command = entry["command"]
+            entry["command"] = str(Path(sys.executable).resolve())
+            changes.append({"target": "config.toml:mcp_servers.codexrelay.command", "operation": "update_owned_runtime",
+                            "before": str(previous_command), "after": entry["command"]})
         # Never replace a whole table: tomlkit preserves comments, extra entries
         # and per-tool approval settings while the chosen delta is applied.
         disabled = entry.get("disabled_tools", [])
@@ -257,7 +266,8 @@ def _repair_data(store, codex_home=None, capability_scope="full", remove_denials
                         if name not in allowed and name not in retained:
                             allowed.append(name)
                             additions.append(name)
-            if additions: changes.append({"target": "config.toml:mcp_servers.codexrelay.enabled_tools", "operation": "append", "tools": additions})
+            if additions and not any(item['operation'] == 'initialize_basic_allowlist' for item in changes):
+                changes.append({"target": "config.toml:mcp_servers.codexrelay.enabled_tools", "operation": "append", "tools": additions})
             if cleared: changes.append({"target": "config.toml:mcp_servers.codexrelay", "operation": "remove_selected_denials", "tools": sorted(set(cleared))})
         if enable_server and entry.get("enabled") == False:
             entry["enabled"] = True
@@ -357,7 +367,9 @@ def apply_plan(store, plan, codex_home=None):
         store.set_setting("integration_recovery:" + str(directory), None)
         store.set_setting("integration_repair_backup:" + str(directory), str(backup))
         if current["selection"]["update_registration"]:
-            store.set_setting("integration_registration:" + str(directory), {"command": str(Path(sys.executable).resolve())})
+            # Bind ownership to our checked write, never a later external edit.
+            actual = tomlkit.parse(decode(config_file[2]))["mcp_servers"]["codexrelay"]
+            store.set_setting("integration_registration:" + str(directory), {"command": str(Path(actual["command"]).resolve())})
         return {**status(store, directory), "restart_required": True, "operation_backup": str(backup), "message": "配置已更新，等待客户端重新连接并重新验证"}
 
 
@@ -377,7 +389,7 @@ def restore_repair(store, codex_home=None):
         return {"restored": not pending, "pending": pending, "backup": recovery["backup"]}
 
 
-def status(store, codex_home=None, instance=None, workspace=None, client_session_id=None):
+def status(store, codex_home=None, instance=None, workspace=None, client_session_id=None, client_report_id=None):
     directory = codex_dir(codex_home)
     try:
         config = tomlkit.parse(decode(read(directory / "config.toml")))
@@ -389,7 +401,8 @@ def status(store, codex_home=None, instance=None, workspace=None, client_session
     prediction = predict_tools(entry, store, directory, parse_error)
     rules = rules_status(read(directory / "AGENTS.md"))
     from .integration_evidence import evidence_status, verification_instructions
-    evidence = evidence_status(store, directory, instance=instance, workspace=workspace, client_session_id=client_session_id)
+    evidence = evidence_status(store, directory, instance=instance, workspace=workspace, client_session_id=client_session_id,
+                               client_report_id=client_report_id)
     ready_config = prediction["registration_state"] == "owned" and not prediction["unknown_policies"] and rules["state"] == "current"
     limited = prediction["server_enabled"] is False or any(item["state"] == "limited" for item in prediction["capabilities"])
     return {"codex_home": str(directory), "config_exists": (directory / "config.toml").exists(),
@@ -405,8 +418,9 @@ def status(store, codex_home=None, instance=None, workspace=None, client_session
             "backup": store.setting("integration_backup:" + str(directory))}
 
 
-def preview(store, codex_home=None, capability_scope="full", remove_denials=None, update_registration=True, update_rules=True, enable_server=False):
-    result = status(store, codex_home)
+def preview(store, codex_home=None, capability_scope="full", remove_denials=None, update_registration=True, update_rules=True, enable_server=False,
+            instance=None, workspace=None, client_session_id=None, client_report_id=None):
+    result = status(store, codex_home, instance, workspace, client_session_id, client_report_id)
     directory = codex_dir(codex_home)
     config = tomlkit.parse(decode(read(directory / "config.toml")))
     entry = config.get("mcp_servers", {}).get("codexrelay")

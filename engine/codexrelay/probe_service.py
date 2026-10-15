@@ -67,8 +67,10 @@ def test(service, provider_id, slot='flash', verification='full', backend=None, 
     backend_version = None
     if backend is not None:
         from .backends import catalog
-        entry = next((item for item in catalog() if item['id'] == backend and item['installed']), None)
+        entry = next((item for item in catalog() if item['id'] == backend), None)
         if entry is None:
+            raise ValueError('未知执行后端')
+        if verification == 'backend' and not entry['installed']:
             raise ValueError('此执行后端尚未安装或不可用')
         backend_version = entry['version']
     identifier = probe_id or uuid.uuid4().hex
@@ -146,7 +148,7 @@ def usage_today(store):
     values = [json.loads(row[0]) for row in rows]
     events = [event for value in values for event in value.get('usage_events', [])]
     reported = [event for event in events if event.get('available')]
-    bounds, priced, unknown_price, unknown_cache_write = [Decimal(0), Decimal(0)], 0, 0, 0
+    bounds, priced, unknown_price, unknown_cache_write, zero_write_rate = [Decimal(0), Decimal(0)], 0, 0, 0, 0
     for value in values:
         for event in value.get('usage_events', []):
             if not event.get('available'):
@@ -155,10 +157,15 @@ def usage_today(store):
                 unknown_price += 1
             if event.get('cache_write_input') is None:
                 unknown_cache_write += 1
-                continue
+                # An explicitly saved zero tariff makes this charge determinate
+                # without inventing the missing provider counter.
+                rate = (value.get('price') or {}).get('cache_write')
+                if rate is None or Decimal(str(rate)) != 0:
+                    continue
+                zero_write_rate += 1
             if value.get('price') is None:
                 continue
-            tokens = {**event, 'cache_write_input': event['cache_write_input']}
+            tokens = {**event, 'cache_write_input': event.get('cache_write_input') or 0}
             cost = estimate(tokens, value.get('price')) if value.get('price') else None
             if cost is None:
                 unknown_price += 1
@@ -170,6 +177,7 @@ def usage_today(store):
                 reported_tokens=sum(event.get('prompt', 0) + event.get('completion', 0) for event in reported),
                 missing_usage=len(events) - len(reported), unknown_price=unknown_price, priced_requests=priced,
                 unknown_cache_write=unknown_cache_write,
+                cache_write_zero_rate=zero_write_rate,
                 cost=amount(bounds) if priced else None,
                 cost_complete=bool(events) and priced == len(events) and all(value.get('request_count') is not None for value in values),
                 cost_basis='api_reference_estimate', legacy_task_usage='task totals exclude probes',

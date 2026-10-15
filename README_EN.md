@@ -5,13 +5,13 @@
 
 **Let Codex delegate to DeepSeek. Manage external agents with a switch.**
 
-[![Release](https://img.shields.io/github/v/release/Favio8/codexrelay?include_prereleases)](https://github.com/Favio8/codexrelay/releases/tag/v0.4.0)
+[![Release](https://img.shields.io/github/v/release/Favio8/codexrelay?include_prereleases)](https://github.com/Favio8/codexrelay/releases/tag/v0.4.1)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-[简体中文](README.md) · English · [Download](https://github.com/Favio8/codexrelay/releases/tag/v0.4.0)
+[简体中文](README.md) · English · [Download](https://github.com/Favio8/codexrelay/releases/tag/v0.4.1)
 </div>
 
-**0.4.0 Windows Beta** adds capability diagnosis and selective repair previews, separate response/tool/backend probes, explicit client/trial evidence, and controlled evaluation with frozen cases. See the [release record](docs/RELEASE-0.4.0.md), [27-item acceptance matrix](docs/DELEGATION-ACCEPTANCE.md) and [experiment instructions](docs/DELEGATION-EXPERIMENTS.md). Real-client six-scenario and paid-model comparisons have not run; no real savings claim is made.
+**0.4.1 Windows Beta** fixes provider-save races, integration repair, verification and continuation gates, and evaluation accounting. The evaluation UI now exposes Pro selection, sourced reference prices, and failure/takeover outcomes. See the [release record](docs/RELEASE-0.4.1.md), [27-item acceptance matrix](docs/DELEGATION-ACCEPTANCE.md) and [experiment instructions](docs/DELEGATION-EXPERIMENTS.md). Real-client six-scenario and paid-model comparisons have not run; no real savings claim is made.
 
 A Windows desktop manager for Codex external agents. Codex plans and reviews; DeepSeek or an OpenAI-compatible provider executes suitable independent tasks through MCP.
 
@@ -21,9 +21,9 @@ A Windows desktop manager for Codex external agents. Codex plans and reviews; De
 
 ## Download
 
-[Windows x64 installer — v0.4.0 Beta](https://github.com/Favio8/codexrelay/releases/download/v0.4.0/CodexRelay_0.4.0_x64-setup.exe) · [Release notes and checksums](https://github.com/Favio8/codexrelay/releases/tag/v0.4.0)
+[Windows x64 installer — v0.4.1 Beta](https://github.com/Favio8/codexrelay/releases/download/v0.4.1/CodexRelay_0.4.1_x64-setup.exe) · [Release notes and checksums](https://github.com/Favio8/codexrelay/releases/tag/v0.4.1)
 
-The current release is **0.4.0 Beta**. Both backends retain independent Run budgets, checkpoints and verified remaining-only continuation. After upgrading, inspect integration, review selected tool/rule repairs, then reconnect Codex and verify the current chat. Saved configuration and a ping do not establish full client capability. See the [release record](docs/RELEASE-0.4.0.md).
+The current release is **0.4.1 Beta**. Both backends retain independent Run budgets, checkpoints and verified remaining-only continuation. After upgrading, inspect integration, review selected tool/rule repairs, then reconnect Codex and verify the current chat. Saved configuration and a ping do not establish full client capability. See the [release record](docs/RELEASE-0.4.1.md).
 
 Verified on Windows 11 x64. Requires an existing Codex installation. Python and the Node runtime for Pi are bundled; end users do not need developer tools. The installer downloads WebView2 if missing. This beta is unsigned and has no automatic updater.
 
@@ -62,7 +62,7 @@ The switch controls CodexRelay external agents only. It does not disable Codex's
 
 Tauri 2 / Rust / React / TypeScript / Python 3.12 / SQLite.
 
-See [development](docs/DEVELOPMENT.md), [architecture](docs/ARCHITECTURE.md), [testing](docs/TESTING.md) and [contributing](CONTRIBUTING.md). The **0.4.0 Beta** acceptance matrix records 19 locally verified conditions, seven partially verified conditions and one real-client six-scenario condition not run. Forty-five trials are prepared only, without paid authorization. Real net benefit is unknown. Automatic updates and concurrent agents remain outside this release.
+See [development](docs/DEVELOPMENT.md), [architecture](docs/ARCHITECTURE.md), [testing](docs/TESTING.md) and [contributing](CONTRIBUTING.md). The **0.4.1 Beta** acceptance matrix records 19 locally verified conditions, seven partially verified conditions and one real-client six-scenario condition not run. Forty-five trials are prepared only, without paid authorization. Real net benefit is unknown. Automatic updates and concurrent agents remain outside this release.
 
 ## Credits and license
 

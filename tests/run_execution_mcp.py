@@ -58,10 +58,19 @@ async def run():
             service.store.set_setting('enabled', True); service.store.set_setting('active_backend', backend)
             env = {k:v for k,v in os.environ.items() if k not in {'OPENAI_API_KEY', 'DEEPSEEK_API_KEY', 'PYTHONPATH', 'PYTHONHOME'}}
             env['CODEXRELAY_HOME'] = str(service.store.directory)
-            params = StdioServerParameters(command=sys.executable, args=['-I', '-B', '-X', 'utf8', '-m', 'codexrelay', 'mcp'], cwd=str(workspace), env=env)
+            isolated_codex=area/'codex';isolated_codex.mkdir()
+            env['CODEX_HOME']=str(isolated_codex)
+            server_args=['-I', '-B', '-X', 'utf8', '-m', 'codexrelay', 'mcp']
+            if os.environ.get('CODEXRELAY_TEST_SOURCE_ENGINE') == '1':
+                bootstrap=f"import sys;sys.path.insert(0,{str(ROOT/'engine')!r});from codexrelay.mcp_server import serve;serve()"
+                server_args=['-I', '-B', '-X', 'utf8', '-c', bootstrap]
+            params = StdioServerParameters(command=sys.executable, args=server_args, cwd=str(workspace), env=env)
             async with stdio_client(params) as (reader, writer), ClientSession(reader, writer) as client:
                 await client.initialize()
+                caller_binding_id=None
                 async def call(name, **arguments):
+                    if caller_binding_id and name != 'bind_client_session':
+                        arguments.setdefault('client_binding_id',caller_binding_id)
                     reply = await client.call_tool(name, arguments); assert not reply.isError, reply
                     return json.loads(reply.content[0].text)
                 async def finished(job):
@@ -85,6 +94,8 @@ async def run():
                 assert {t.name for t in listing.tools} == {t['name'] for t in ping['server_capabilities']['tools']}
                 binding = await call('bind_client_session', session_id='fixture-'+backend, root_session_id='fixture-root-'+backend,
                                      client_kind='local_stdio', confirmed=True, client_version='deterministic-fixture')
+                caller_binding_id=binding['id']
+                await call('ping')
                 group = await call('create_task_group', goal='PHASE_ONE then PHASE_TWO', task_kind='implementation', capability='coding', write_paths=['partial.txt', 'remaining.txt'], constraints='Preserve first artifact; write only remaining work on continuation', acceptance='Both artifacts have exact expected text',client_binding_id=binding['id'])
                 job = await call('start_agent', task='PHASE_ONE', group_id=group['group_id'])
                 task = await finished(job); assert task['status'] == 'budget_stopped', task
@@ -92,6 +103,11 @@ async def run():
                 assert cp['environment']['client_binding_id'] == binding['id']
                 assert cp['environment']['mcp_instance'] == ping['instance']
                 assert cp['mutations'] and cp['files']; assert task['verification']['status'] == 'pending'
+                for disposition in ('verified_complete', 'verified_partial'):
+                    rejected = await call('record_task_verification', job_id=task['id'], passed=False,
+                        evidence='Independent checks failed', disposition=disposition, checkpoint_id=cp['checkpoint_id'],
+                        checkpoint_sha256=cp['sha256'], remaining_items=['PHASE_TWO'])
+                    assert not rejected['ok'] and 'VERIFICATION_NOT_PASSED' in rejected['error'], rejected
                 verification = await call('record_task_verification', job_id=task['id'], passed=True, evidence='Read partial.txt and verified exact contents', disposition='verified_partial', checkpoint_id=cp['checkpoint_id'], checkpoint_sha256=cp['sha256'], completed_items=['PHASE_ONE'], remaining_items=['PHASE_TWO'])
                 assert verification['ok'], verification
                 arguments = dict(group_id=group['group_id'], checkpoint_id=cp['checkpoint_id'], checkpoint_sha256=cp['sha256'], verification_id=verification['verification']['id'], remaining_task='PHASE_TWO', idempotency_key='continue-once')
@@ -116,12 +132,16 @@ async def run():
                 observed = await call('get_client_evidence',group_id=group['group_id'])
                 assert any(r['tool']=='resume_agent' and r['success'] for r in observed['calls']), observed
                 assert {r['client_binding_id'] for r in observed['calls'] if 'client_binding_id' in r} == {binding['id']}
+                assert {r['caller_binding_id'] for r in observed['calls']} == {binding['id']}
+                assert all(r['owner_binding_id']==binding['id'] for r in observed['calls'])
                 reports.append(dict(backend=backend, protocol='thinking', ok=True, group_id=group['group_id'],
-                                    fixture=str(area), rounds=2, usage=chain['usage_summary'], checks=['budget checkpoint', 'journal/workspace gate', 'switch gate', 'partial verification', 'remaining-only continuation', 'idempotency', 'parent completion']))
+                                    fixture=str(area), rounds=2, usage=chain['usage_summary'], checks=['budget checkpoint', 'journal/workspace gate', 'switch gate', 'failed verification cannot accept/continue', 'partial verification', 'remaining-only continuation', 'idempotency', 'parent completion', 'explicit caller binding on the complete control/query chain']))
             reopened = Store(area / 'state'); assert reopened.task(next_task['id'])['status'] == 'completed'
-        report = dict(kind='fixed_local_response_real_stdio_and_tools', ok=True, backends=reports)
+        report = dict(kind='fixed_local_response_real_stdio_and_tools', ok=True, backends=reports,
+                      engine_source='workspace' if os.environ.get('CODEXRELAY_TEST_SOURCE_ENGINE')=='1' else 'bundled_runtime',
+                      client_identity='explicit test report, not independently attested host identity')
         from codexrelay import __version__
-        evidence = ROOT / 'artifacts/evidence' / __version__; evidence.mkdir(parents=True, exist_ok=True)
+        evidence = ROOT / 'artifacts/evidence/implementation-review'; evidence.mkdir(parents=True, exist_ok=True)
         (evidence / 'execution-mcp.json').write_text(json.dumps(report, ensure_ascii=False, indent=2))
         print(json.dumps(report, ensure_ascii=False, indent=2))
     finally: server.shutdown()

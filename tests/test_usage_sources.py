@@ -55,6 +55,24 @@ class UsageSourcesTests(unittest.TestCase):
         self.assertEqual(day['tokens']['total'],242)
         self.assertEqual(day['coverage']['resets'],1)
 
+    def test_same_timestamp_cumulative_checkpoints_keep_each_monotonic_increment(self):
+        self.write(meta(),context(),cumulative(100),cumulative(200))
+        self.enable();day=self.today()
+        self.assertEqual(day['tokens']['total'],220)
+        self.assertEqual(self.today()['scan']['bytes_read'],0)
+
+    def test_old_parser_cache_is_rebuilt_from_unchanged_source_before_new_identity_keys_are_used(self):
+        self.write(meta(),context(),cumulative(100),cumulative(200,'2026-10-13T02:01:00Z'))
+        self.enable();self.assertEqual(self.today()['tokens']['total'],220)
+        with self.store.connect() as db:
+            saved=db.execute('SELECT state FROM codex_usage_files WHERE path=?',(str(self.file.resolve()),)).fetchone()
+            state=json.loads(saved[0]);state.pop('parser_version',None)
+            db.execute('UPDATE codex_usage_files SET state=? WHERE path=?',(json.dumps(state),str(self.file.resolve())))
+        rebuilt=self.today()
+        self.assertGreater(rebuilt['scan']['bytes_read'],0)
+        self.assertEqual(rebuilt['tokens']['total'],220)
+        self.assertEqual(self.today()['tokens']['total'],220)
+
     def test_mixed_formats_do_not_add_two_accounting_chains(self):
         self.write(meta(),context(),cumulative(100),direct())
         self.enable();day=self.today()

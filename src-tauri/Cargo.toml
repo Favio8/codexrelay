@@ -1,6 +1,6 @@
 [package]
 name = "codexrelay"
-version = "0.4.0"
+version = "0.4.1"
 description = "Codex external agent control center"
 edition = "2021"
 

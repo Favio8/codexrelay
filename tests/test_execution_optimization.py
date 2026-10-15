@@ -402,12 +402,68 @@ class OptimizationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'NEEDS_MORE_EVIDENCE'):
             groups.verify(self.store, task, True, 'Model claimed completion', 'verified_partial', meta['checkpoint_id'], meta['sha256'], remaining_items=['remaining'])
 
+    def test_failed_verification_cannot_accept_a_task_or_authorize_remaining_work(self):
+        task = self.start(); meta = task['checkpoint']
+        initial = groups.get(self.store, task['group_id'])
+        for disposition in ('verified_complete', 'verified_partial'):
+            with self.assertRaisesRegex(ValueError, 'VERIFICATION_NOT_PASSED'):
+                groups.verify(self.store, task, False, 'Independent checks failed', disposition,
+                              meta['checkpoint_id'], meta['sha256'], remaining_items=['remaining step'], checked_files=['input.txt'])
+            self.assertEqual(groups.get(self.store, task['group_id']), initial)
+        verification = self.verify(task)
+        # Older versions could persist this contradictory record. Do not permit
+        # it to resume work after upgrading; require a fresh successful check.
+        with self.store.connect() as db:
+            group = groups.load(db, task['group_id'])
+            group['verification_head']['status'] = 'failed'
+            groups.save(db, group)
+        with self.assertRaisesRegex(ValueError, 'valid partial verification required'):
+            self.resume(task, verification)
+        self.assertEqual(len(groups.get(self.store, task['group_id'])['run_ids']), 1)
+
     def test_context_model_window_is_frozen_and_unknown_is_not_fabricated(self):
         self.assertIsNone(self.config.context_window)
         self.service.save_provider(id=self.provider['id'], name='fixture', base_url='http://localhost:1', flash_model='fixture', pro_model='fixture', flash_context_window=64000)
         task = self.start(); self.assertEqual(task['context_window'], 64000)
         self.service.save_provider(id=self.provider['id'], name='fixture', base_url='http://localhost:1', flash_model='fixture', pro_model='fixture', flash_context_window=128000)
         self.assertEqual(self.store.task(task['id'])['context_window'], 64000)
+
+    def test_later_checkpoint_cannot_reuse_old_partial_verification(self):
+        task = self.start()
+        verification = self.verify(task)
+        old_checkpoint = task['checkpoint']
+        telemetry = dict(task['telemetry'])
+        telemetry['progress'] = {**telemetry.get('progress', {}), 'gaps': ['later_evidence_requires_review']}
+        current = self.store.update_task(task['id'], telemetry=telemetry)
+        self.assertNotEqual(current['checkpoint']['checkpoint_id'], old_checkpoint['checkpoint_id'])
+        self.assertEqual(current['verification']['status'], 'pending')
+        self.assertEqual(groups.get(self.store, task['group_id'])['status'], 'awaiting_verification')
+        with patch.object(self.relay.manager, 'start') as execute:
+            with self.assertRaisesRegex(ValueError, 'CHECKPOINT_VERSION_STALE'):
+                self.resume(task, verification, key='obsolete-checkpoint')
+        execute.assert_not_called()
+        self.assertEqual(len(groups.get(self.store, task['group_id'])['run_ids']), 1)
+        # Independent re-verification of the current checkpoint remains usable.
+        fresh = self.store.task(task['id'])
+        accepted = self.verify(fresh)
+        checkpoint = fresh['checkpoint']
+        next_run = self.store.admit('\n'.join(accepted['remaining_items']), self.workspace, 'readonly', 'flash',
+            group_id=task['group_id'], continuation=dict(idempotency_key='current-checkpoint', request_sha256='isolated-state-admission',
+                verification_id=accepted['id'], checkpoint_id=checkpoint['checkpoint_id'], checkpoint_sha256=checkpoint['sha256'], manual_resume=False))
+        self.assertEqual(next_run['round_index'], 2)
+        self.store.update_task(next_run['id'], status='failed', finished_at=time.time(), error='state-admission fixture; no model request')
+
+    def test_current_run_failed_verification_cannot_reuse_passed_group_head(self):
+        task = self.start()
+        verification = self.verify(task)
+        # A contradictory historical/current task record must not inherit a
+        # stale group-level pass even when its checkpoint bytes did not change.
+        self.store.update_task(task['id'], verification={**verification, 'status': 'failed'})
+        with patch.object(self.relay.manager, 'start') as execute:
+            with self.assertRaisesRegex(ValueError, 'valid partial verification required'):
+                self.resume(task, verification, key='failed-current-run')
+        execute.assert_not_called()
+        self.assertEqual(len(groups.get(self.store, task['group_id'])['run_ids']), 1)
 
     def test_legacy_record_remains_single_history_without_checkpoint(self):
         with self.store.connect() as db:

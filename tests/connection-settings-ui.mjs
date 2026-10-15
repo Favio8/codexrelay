@@ -11,7 +11,7 @@ const env={...process.env,CODEXRELAY_HOME:path.join(area,'state'),CODEX_HOME:pat
 delete env.DEEPSEEK_API_KEY;delete env.OPENAI_API_KEY;
 const python=path.join(root,'runtime','python.exe');
 const bootstrap=`import sys;sys.path.insert(0,${JSON.stringify(path.join(root,'engine'))});`;
-let delay=0,status=200;
+let delay=0,status=200,simulateMissingPi=false;
 const requests=[],calls=[],errors=[];
 const modelServer=http.createServer(async(req,res)=>{
  let raw='';for await(const chunk of req)raw+=chunk;
@@ -24,7 +24,7 @@ const modelServer=http.createServer(async(req,res)=>{
  const message=!body.tools||hasResult?{role:'assistant',content:marker||'CONNECTED'}:{role:'assistant',content:null,tool_calls:[{id:'probe',type:'function',function:{name:toolName,arguments:toolName==='Read'?JSON.stringify({path:'probe.txt'}):'{}'}}]};
  if(responseDelay)await new Promise(resolve=>setTimeout(resolve,responseDelay));
  res.writeHead(responseStatus,{'Content-Type':'application/json'});
- res.end(JSON.stringify(responseStatus===200?{id:'fixture',object:'chat.completion',created:1,model:body.model,choices:[{index:0,message,finish_reason:message.tool_calls?'tool_calls':'stop'}]}:{error:{message:'fixture-secret'}}));
+ res.end(JSON.stringify(responseStatus===200?{id:'fixture',object:'chat.completion',created:1,model:body.model,usage:{prompt_tokens:20,completion_tokens:5,total_tokens:25},choices:[{index:0,message,finish_reason:message.tool_calls?'tool_calls':'stop'}]}:{error:{message:'fixture-secret'}}));
 });
 const dist=path.join(root,'dist');
 const webServer=http.createServer((req,res)=>{
@@ -37,7 +37,7 @@ function rpc(method,params={}){
  return new Promise((resolve,reject)=>{
   const child=spawn(python,['-I','-B','-X','utf8','-c',bootstrap+'from codexrelay.__main__ import main;main()','rpc'],{env,windowsHide:true});
   let out='',err='';child.stdout.on('data',c=>out+=c);child.stderr.on('data',c=>err+=c);
-  child.on('error',reject);child.on('exit',code=>{try{assert.equal(code,0,err);resolve(JSON.parse(out));}catch(e){reject(e);}});
+  child.on('error',reject);child.on('exit',code=>{try{assert.equal(code,0,err);const result=JSON.parse(out);if(method==='backend_catalog'&&simulateMissingPi&&result.ok)result.data=result.data.map(item=>item.id==='pi'?{...item,installed:false}:item);resolve(result);}catch(e){reject(e);}});
   child.stdin.end(JSON.stringify({method,params}));
  });
 }
@@ -94,6 +94,7 @@ try{
  await backend.getByRole('button',{name:'测试连接',exact:true}).evaluate(e=>e.dispatchEvent(new MouseEvent('click',{bubbles:true})));
  await expect(backend.getByRole('status')).toContainText('已等待 3 秒',{timeout:4500});
  await expect(toast).toContainText('工具能力尚未验证');assert.equal(requests.length-before,1);
+ await expect(page.getByRole('region',{name:'连接测试用量'})).toContainText('缓存写入用量未知');
  assert.equal(calls.filter(c=>c.method==='test_backend').length,1);
  await expect(backend.getByRole('button',{name:'测试连接',exact:true})).toBeEnabled();
  await page.mouse.move(1,1);await expect(toast).toBeHidden({timeout:3000});
@@ -117,6 +118,20 @@ try{
    assert.equal(calls.filter(c=>c.method==='test_backend').at(-1).params.verification,verification);
   }
  }
+ // Unavailable Pi may block backend execution; model probes still work.
+ await rpc('activate_execution',{backend:'pi',provider_id:(await rpc('snapshot')).data.active_provider_id});
+ simulateMissingPi=true;
+ await page.getByRole('button',{name:'总览',exact:true}).click();
+ await page.getByRole('button',{name:'设置与诊断',exact:true}).click();
+ await expect(backend.getByRole('button',{name:'执行后端验证',exact:true})).toBeDisabled();
+ for(const [name,count] of [['测试连接',1],['完整工具验证',2]]){
+  const before=requests.length;await expect(backend.getByRole('button',{name,exact:true})).toBeEnabled();
+  await backend.getByRole('button',{name,exact:true}).click();
+  await expect(toast).toContainText(name==='测试连接'?'连接正常':'模型工具协议验证通过',{timeout:15000});
+  await expect(backend.getByRole('button',{name,exact:true})).toBeEnabled();
+  assert.equal(requests.length-before,count);
+ }
+ simulateMissingPi=false;
  await page.getByRole('button',{name:'供应商',exact:true}).click();
  for(const width of [900,800]){
   await page.setViewportSize({width,height:600});
@@ -136,6 +151,16 @@ try{
    assert.equal(call.params.slot,slot);assert.equal(call.params.verification,verification);
   }
  }
+ // Opening and saving the same provider preserves validated evidence and identity.
+ const prior=(await rpc('snapshot')).data.providers[0],savedRequests=requests.length;
+ await provider.getByRole('button',{name:'编辑',exact:true}).click();
+ await page.getByRole('button',{name:'保存供应商',exact:false}).click();
+ await expect(page.getByRole('heading',{name:'编辑供应商',exact:true})).toHaveCount(0);
+ const afterSave=(await rpc('snapshot')).data.providers[0];
+ assert.equal(afterSave.revision,prior.revision);assert.deepEqual(afterSave.probe_evidence,prior.probe_evidence);
+ assert.equal(requests.length,savedRequests);
+ await provider.locator('.probe-evidence summary').click();
+ await expect(provider.locator('.probe-evidence')).toContainText('工具协议：已验证');
  assert(requests.at(-1).messages.some(m=>m.role==='tool'));
  await page.mouse.move(1,1);await expect(toast).toBeHidden({timeout:3000});
  delay=4000;const leaveBefore=requests.length;
@@ -145,7 +170,7 @@ try{
  assert.equal(await toast.count(),0,'unmounted test must not publish a stale notification');
  assert(calls.some(c=>c.method==='cancel_probe'),'navigation must cancel the in-flight request');
  assert.deepEqual(errors,[]);
- console.log(JSON.stringify({ok:true,area,checks:['900/800 layout','16px checkbox and 8px aligned labels','24px footer separation','keyboard disclosure','2s dismissal and repeated notice reset','hover pause','immediate spinner and 3s elapsed feedback','one real request/no duplicate','persistent actionable errors/no credential exposure','Flash/Pro quick/full through provider-list RPC','Flash/Pro quick/full/backend through backend-panel RPC','real backend reads a random file marker','navigation cancels in-flight probe','no stale results after navigation','no JavaScript errors']}));
+ console.log(JSON.stringify({ok:true,area,checks:['900/800 layout','16px checkbox and 8px aligned labels','24px footer separation','keyboard disclosure','2s dismissal and repeated notice reset','hover pause','immediate spinner and 3s elapsed feedback','one real request/no duplicate','persistent actionable errors/no credential exposure','Flash/Pro quick/full through provider-list RPC','Flash/Pro quick/full/backend through backend-panel RPC','real backend reads a random file marker','unavailable backend does not block model probes','unchanged provider save preserves revision and evidence without requests','unknown cache-write usage is visible','navigation cancels in-flight probe','no stale results after navigation','no JavaScript errors']}));
 }finally{
  if(browser)await browser.close();
  await new Promise(resolve=>webServer.close(resolve));await new Promise(resolve=>modelServer.close(resolve));

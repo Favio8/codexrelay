@@ -290,7 +290,7 @@ def serve():
     if os.name == "nt":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     relay = Relay()
-    mcp = FastMCP("codexrelay", instructions="CodexRelay: delegate suitable independent work through these tools. Check ping workspace before delegation. A disabled/busy response means continue yourself. Never change global or project switches through shell to bypass the user. " + HOST_INSTRUCTIONS)
+    mcp = FastMCP("codexrelay", instructions="CodexRelay: delegate suitable independent work through these tools. Check ping workspace before delegation. A disabled/busy response means continue yourself. Never change global or project switches through shell to bypass the user. For chat-specific call evidence, pass the returned bind_client_session id as client_binding_id on every task/control/query call; an omitted caller remains unknown and calls still work. " + HOST_INSTRUCTIONS)
     readonly = ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False)
     mutating = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=True)
 
@@ -309,12 +309,12 @@ def serve():
                        'server_capabilities': manifest(), 'evidence_source': 'server_declaration'})
 
     @mcp.tool(annotations=mutating)
-    def start_deepseek(task: str, context: str = "", model: Literal["flash", "pro"] = "flash", token_budget: int | None = None, task_root: str | None = None, write_paths: list[str] | None = None) -> str:
+    def start_deepseek(task: str, context: str = "", model: Literal["flash", "pro"] = "flash", token_budget: int | None = None, task_root: str | None = None, write_paths: list[str] | None = None, client_binding_id: str | None = None) -> str:
         """Start an independently executing coding task. Return job_id for status/control."""
         return safe(lambda: relay.start(task, context, "coding", model, token_budget, task_root, write_paths, backend="deepseek"))
 
     @mcp.tool(annotations=mutating)
-    def start_deepseek_readonly(task: str, context: str = "", model: Literal["flash", "pro"] = "flash", token_budget: int | None = None, task_root: str | None = None, write_paths: list[str] | None = None) -> str:
+    def start_deepseek_readonly(task: str, context: str = "", model: Literal["flash", "pro"] = "flash", token_budget: int | None = None, task_root: str | None = None, write_paths: list[str] | None = None, client_binding_id: str | None = None) -> str:
         """Start pure file analysis; only Read, Glob and Grep, no commands or writes."""
         return safe(lambda: relay.start(task, context, "readonly", model, token_budget, task_root, write_paths, backend="deepseek"))
 
@@ -335,22 +335,22 @@ def serve():
             raise
 
     @mcp.tool(annotations=mutating)
-    async def delegate_to_deepseek(task: str, context: str = "", model: Literal["flash", "pro"] = "flash", token_budget: int | None = None, task_root: str | None = None, write_paths: list[str] | None = None) -> str:
+    async def delegate_to_deepseek(task: str, context: str = "", model: Literal["flash", "pro"] = "flash", token_budget: int | None = None, task_root: str | None = None, write_paths: list[str] | None = None, client_binding_id: str | None = None) -> str:
         """Execute a complete coding task and wait for its result; host verifies changes."""
         return await delegate(task, context, "coding", model, token_budget, task_root, write_paths)
 
     @mcp.tool(annotations=mutating)
-    async def delegate_to_deepseek_readonly(task: str, context: str = "", model: Literal["flash", "pro"] = "flash", token_budget: int | None = None, task_root: str | None = None, write_paths: list[str] | None = None) -> str:
+    async def delegate_to_deepseek_readonly(task: str, context: str = "", model: Literal["flash", "pro"] = "flash", token_budget: int | None = None, task_root: str | None = None, write_paths: list[str] | None = None, client_binding_id: str | None = None) -> str:
         """Execute pure Read/Glob/Grep analysis and wait for its result."""
         return await delegate(task, context, "readonly", model, token_budget, task_root, write_paths)
 
     @mcp.tool(annotations=readonly)
-    def get_deepseek_status(job_id: str) -> str:
+    def get_deepseek_status(job_id: str, client_binding_id: str | None = None) -> str:
         """Get task state; available even when delegation is switched off."""
         return safe(lambda: {k: v for k, v in relay.owned(job_id).items() if k != "result"})
 
     @mcp.tool(annotations=readonly)
-    def get_deepseek_result(job_id: str) -> str:
+    def get_deepseek_result(job_id: str, client_binding_id: str | None = None) -> str:
         """Retrieve persisted result; completed is execution status, not host verification."""
         def result():
             task = relay.owned(job_id)
@@ -358,7 +358,7 @@ def serve():
         return safe(result)
 
     @mcp.tool(annotations=mutating)
-    def cancel_deepseek(job_id: str) -> str:
+    def cancel_deepseek(job_id: str, client_binding_id: str | None = None) -> str:
         """Request termination; existing file changes are preserved for review."""
         def cancel():
             relay.owned(job_id)
@@ -366,7 +366,7 @@ def serve():
         return safe(cancel)
 
     @mcp.tool(annotations=mutating)
-    def send_deepseek_message(job_id: str, message: str) -> str:
+    def send_deepseek_message(job_id: str, message: str, client_binding_id: str | None = None) -> str:
         """Steer this instance's running background task at the next safe point."""
         def send():
             relay.owned(job_id)
@@ -383,7 +383,7 @@ def serve():
     def record_deepseek_verification(job_id: str, passed: bool, evidence: str,
           disposition: str | None = None, checkpoint_id: str | None = None, checkpoint_sha256: str | None = None,
           completed_items: list[str] | None = None, remaining_items: list[str] | None = None,
-          checked_files: list[str] | None = None, parent_completed: bool = False) -> str:
+          checked_files: list[str] | None = None, parent_completed: bool = False, client_binding_id: str | None = None) -> str:
         """Record the parent's independent verification after execution, with evidence."""
         def verify():
             task = relay.owned(job_id)
@@ -413,22 +413,22 @@ def serve():
         return safe(acknowledge)
 
     @mcp.tool(annotations=mutating)
-    def start_agent(task: str, context: str = '', model: Literal['flash','pro'] = 'flash', token_budget: int | None = None, task_root: str | None = None, write_paths: list[str] | None = None, group_id: str | None = None, task_kind: str | None = None, acceptance: str = '') -> str:
+    def start_agent(task: str, context: str = '', model: Literal['flash','pro'] = 'flash', token_budget: int | None = None, task_root: str | None = None, write_paths: list[str] | None = None, group_id: str | None = None, task_kind: str | None = None, acceptance: str = '', client_binding_id: str | None = None) -> str:
         """Start a coding task on the selected backend; retain job_id for control."""
         return safe(lambda: relay.start(task,context,'coding',model,token_budget,task_root,write_paths, group_id=group_id, task_kind=task_kind, acceptance=acceptance))
 
     @mcp.tool(annotations=mutating)
-    def start_agent_readonly(task: str, context: str = '', model: Literal['flash','pro'] = 'flash', token_budget: int | None = None, task_root: str | None = None, write_paths: list[str] | None = None, group_id: str | None = None, task_kind: str | None = None, acceptance: str = '') -> str:
+    def start_agent_readonly(task: str, context: str = '', model: Literal['flash','pro'] = 'flash', token_budget: int | None = None, task_root: str | None = None, write_paths: list[str] | None = None, group_id: str | None = None, task_kind: str | None = None, acceptance: str = '', client_binding_id: str | None = None) -> str:
         """Start strict file-only inspection on the selected backend."""
         return safe(lambda: relay.start(task,context,'readonly',model,token_budget,task_root,write_paths, group_id=group_id, task_kind=task_kind, acceptance=acceptance))
 
     @mcp.tool(annotations=mutating)
-    async def delegate_to_agent(task: str, context: str = '', model: Literal['flash','pro'] = 'flash', token_budget: int | None = None, task_root: str | None = None, write_paths: list[str] | None = None, group_id: str | None = None, task_kind: str | None = None, acceptance: str = '') -> str:
+    async def delegate_to_agent(task: str, context: str = '', model: Literal['flash','pro'] = 'flash', token_budget: int | None = None, task_root: str | None = None, write_paths: list[str] | None = None, group_id: str | None = None, task_kind: str | None = None, acceptance: str = '', client_binding_id: str | None = None) -> str:
         """Execute a selected-backend coding task and wait; parent verifies the evidence."""
         return await delegate(task,context,'coding',model,token_budget,task_root,write_paths,backend=None, group_id=group_id, task_kind=task_kind, acceptance=acceptance)
 
     @mcp.tool(annotations=mutating)
-    async def delegate_to_agent_readonly(task: str, context: str = '', model: Literal['flash','pro'] = 'flash', token_budget: int | None = None, task_root: str | None = None, write_paths: list[str] | None = None, group_id: str | None = None, task_kind: str | None = None, acceptance: str = '') -> str:
+    async def delegate_to_agent_readonly(task: str, context: str = '', model: Literal['flash','pro'] = 'flash', token_budget: int | None = None, task_root: str | None = None, write_paths: list[str] | None = None, group_id: str | None = None, task_kind: str | None = None, acceptance: str = '', client_binding_id: str | None = None) -> str:
         """Execute strict Read/Glob/Grep inspection on the selected backend and wait."""
         return await delegate(task,context,'readonly',model,token_budget,task_root,write_paths,backend=None, group_id=group_id, task_kind=task_kind, acceptance=acceptance)
 
@@ -455,7 +455,7 @@ def serve():
                                              client_binding_id, experiment_id, trial_id))
 
     @mcp.tool(annotations=readonly)
-    def get_task_group(group_id: str) -> str:
+    def get_task_group(group_id: str, client_binding_id: str | None = None) -> str:
         """Read persisted runs, cumulative usage and remaining authorized continuations. Does not execute."""
         def read():
             group = groups.get(relay.store, group_id)
@@ -464,7 +464,7 @@ def serve():
         return safe(read)
 
     @mcp.tool(annotations=readonly)
-    def get_task_checkpoint(checkpoint_id: str, include_context: bool = False, context_epoch: int | None = None) -> str:
+    def get_task_checkpoint(checkpoint_id: str, include_context: bool = False, context_epoch: int | None = None, client_binding_id: str | None = None) -> str:
         """Read the full immutable progress index, evidence and integrity hash on demand; verify real files separately."""
         def read():
             body = groups.read_checkpoint(relay.store, checkpoint_id, include_context, context_epoch)
@@ -474,12 +474,12 @@ def serve():
 
     @mcp.tool(annotations=mutating)
     def resume_agent(group_id: str, checkpoint_id: str, checkpoint_sha256: str, verification_id: str, remaining_task: str,
-                     idempotency_key: str, model: Literal['flash', 'pro'] = 'flash', token_budget: int | None = None, manual_resume: bool = False) -> str:
+                     idempotency_key: str, model: Literal['flash', 'pro'] = 'flash', token_budget: int | None = None, manual_resume: bool = False, client_binding_id: str | None = None) -> str:
         """Start only independently verified remaining_items in the same group. Requires current evidence, cleared recovery, switches and authorization. App alone grants extensions."""
         return safe(lambda: relay.resume(group_id, checkpoint_id, checkpoint_sha256, verification_id, remaining_task, idempotency_key, model, token_budget, manual_resume))
 
     @mcp.tool(annotations=mutating)
-    def cancel_task_group(group_id: str) -> str:
+    def cancel_task_group(group_id: str, client_binding_id: str | None = None) -> str:
         """Cancel the execution chain; a checkpoint never automatically resumes cancellation."""
         return safe(lambda: relay.cancel_group(group_id))
 
@@ -492,7 +492,7 @@ def serve():
                     confirmed=confirmed, client_version=client_version, observation_id=observation_id))
 
     @mcp.tool(annotations=readonly)
-    def get_client_evidence(group_id: str | None = None) -> str:
+    def get_client_evidence(group_id: str | None = None, client_binding_id: str | None = None) -> str:
         """Read engine-observed invocation identities. Local stdio, CLI and Desktop reports remain distinct."""
         return safe(lambda: client_evidence.chain(relay.store, workspace=relay.workspace, group_id=group_id))
 

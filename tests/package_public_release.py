@@ -29,6 +29,15 @@ PUBLIC_EVIDENCE = {
     'public-native-build.log', 'public-bundle.log', 'license-completeness.json', 'license-notices-tests.log',
     'public-runtime-preparation.json', 'public-build-verification.json', 'public-release-tests.log',
     'public-fresh-install-scan.json', 'public-native-result.json',
+    'unit-regression.log', 'evaluation-final.log', 'execution-mcp.json', 'execution-mcp.log',
+    'integration-usability-unit.log', 'integration-usability-ui.log', 'integration-ownership-fault.log',
+    'connection-functional-audit.json', 'adversarial-review.json', 'adversarial-unit.log',
+    'installer-0.4.0.json', 'native-roadmap.log',
+    'connection-adversarial-review.json', 'connection-adversarial-unit.log',
+    'provider-save-rpc-ui.json', 'provider-save-rpc-ui.log', 'checkpoint-adversarial-tests.log',
+    'client-caller-adversarial-tests.log', 'evaluation-adversarial.log', 'usage-identity-migration.log',
+    'identity-recovery-adversarial-review.json', 'client-identity-mcp.json', 'client-identity-mcp.log', 'execution-mcp-caller.log',
+    'public-final-build.log', 'public-fresh-install.log', 'public-installed-version.log',
 }
 PINNED_INPUTS = {
     'src-tauri/Cargo.toml', 'src-tauri/Cargo.lock', 'src-tauri/tauri.conf.json',
@@ -205,7 +214,7 @@ def package(ref='HEAD'):
               (ROOT / 'runtime/THIRD-PARTY-NOTICES.txt', 'THIRD-PARTY-NOTICES.txt'),
               (ROOT / 'runtime/pi/THIRD_PARTY_LICENSES.txt', 'PI-THIRD-PARTY-LICENSES.txt'),
               (ROOT / 'runtime/pi/LICENSE', 'NODE-LICENSE.txt'), (ROOT / 'runtime/LICENSE.txt', 'PYTHON-LICENSE.txt')]
-    assets.extend((ROOT / 'docs' / name, name) for name in ('RELEASE-0.4.0.md', 'DELEGATION-ACCEPTANCE.md', 'DELEGATION-EXPERIMENTS.md'))
+    assets.extend((ROOT / 'docs' / name, name) for name in (f'RELEASE-{version}.md', 'DELEGATION-ACCEPTANCE.md', 'DELEGATION-EXPERIMENTS.md'))
     expected_names = {source.name, proof.name, installer.name, 'SOURCE_MANIFEST.json', 'BUILD_SOURCE_MANIFEST.json',
                       'release-manifest.json', 'SHA256SUMS.txt', *(name for _, name in assets)}
     unexpected = {path.name for path in destination.iterdir()} - expected_names
@@ -227,7 +236,9 @@ def package(ref='HEAD'):
                    local_verification_snapshot='delivery-verification.json in the evidence archive',
                    public_build_verification='public-build-verification.json in the evidence archive',
                    coverage={'locally_verified': 19, 'partially_verified': 7, 'real_client_condition_not_run': 1},
-                   paid_experiments=0, prepared_trials=45, real_net_benefit='unknown')
+                   paid_experiments=0,
+                   prepared_trials=len(json.loads(public.get('prepared-45-manifest.json', b'{}')).get('trials', [])),
+                   real_net_benefit='unknown')
     (destination / 'release-manifest.json').write_text(json.dumps(release, indent=2), encoding='utf-8')
     files['release-manifest.json'] = {'sha256': digest((destination / 'release-manifest.json').read_bytes())}
     (destination / 'SHA256SUMS.txt').write_text(''.join(f"{record['sha256']}  {name}\n" for name, record in sorted(files.items())), encoding='utf-8')

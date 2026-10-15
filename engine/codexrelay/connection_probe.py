@@ -119,7 +119,7 @@ def _run_worker(payload, limit, *, started=None, cancel=None):
     done = next((event for event in reversed(events) if event['event'] == 'done'), {})
     record = dict(ok=bool(done.get('ok')) and failure is None and cleanup_ok,
                   elapsed_ms=operation_ms, cleanup_ms=cleanup_ms, cleanup_complete=cleanup_ok,
-                  deadline_seconds=limit, timed_out=bool(failure and '秒内完成' in failure),
+                  deadline_seconds=limit, timed_out=bool(failure and '秒内完成' in failure) or done.get('error_code') == 'probe_timeout',
                   request_count=requests, usage_events=usage, protocol='openai-chat-completions',
                   tool_roundtrip=bool(done.get('tool_roundtrip')), backend_verified=bool(done.get('backend_verified')),
                   tool_evidence=done.get('tool_evidence', []), automatic_retries=0)
@@ -127,6 +127,8 @@ def _run_worker(payload, limit, *, started=None, cancel=None):
                   actual_model_basis='provider_response' if len(reported_models) == 1 else 'unknown_or_mixed')
     if done.get('error_type'):
         record['error_type'] = done['error_type']
+    if done.get('error_code'):
+        record.update(error_code=done['error_code'], http_status=done.get('http_status'))
     if not record['ok']:
         message = failure or (done.get('error') if done else '连接测试进程未返回有效结果，请运行诊断。')
         if not cleanup_ok:
@@ -272,7 +274,7 @@ def _backend_request(payload):
         supplied = event.get('arguments', {}).get('path', '')
         target = (Path(payload['workspace']) / supplied).resolve()
         if target == (Path(payload['workspace']) / 'probe.txt').resolve() and not event.get('result', '').startswith('ERROR:'):
-            valid.append({'tool_id': event.get('tool_id'), 'name': 'Read', 'path': 'probe.txt',
+            valid.append({'tool_id': _reported_model(event.get('tool_id'), payload['secret']) or '[REDACTED_OR_UNKNOWN]', 'name': 'Read', 'path': 'probe.txt',
                           'marker_matched': True, 'turn': event.get('turn')})
     if not valid or marker not in result.get('final_message', ''):
         raise ProbeFailure('后端未完成实际文件读取，请检查模型工具兼容性')
@@ -295,9 +297,38 @@ def _safe_error(error, payload):
         return '接口或模型不存在（HTTP 404），请检查地址和模型名称。'
     if code == 429:
         return '供应商限流或额度不足（HTTP 429），请稍后重试。'
+    if code in {400, 422}:
+        return f'供应商拒绝请求参数（HTTP {code}），请核对模型名称、推理设置与接口协议。'
+    if code == 413:
+        return '供应商拒绝过大的请求（HTTP 413），请检查接口请求大小限制。'
+    if isinstance(code, int) and 500 <= code <= 599:
+        return f'供应商服务暂时异常（HTTP {code}），请稍后手动重试。'
     if type(error).__name__ in {'APITimeoutError', 'ProviderRequestDeadline'} or 'run time budget exceeded' in str(error):
         return '连接测试达到截止时间，请检查网络或重试。'
+    if type(error).__name__ == 'APIConnectionError' or 'category=connection' in str(error):
+        return '无法连接供应商接口，请检查地址、网络或代理设置。'
+    if isinstance(code, int) and 400 <= code <= 599:
+        return f'供应商拒绝连接测试（HTTP {code}），请检查供应商设置。'
     return '连接测试失败，请检查网络、模型与执行后端设置；未自动重放。'
+
+
+def _error_metadata(error):
+    code = getattr(error, 'status_code', None)
+    match = re.search(r'\bstatus=(\d{3})\b', str(error))
+    code = int(match.group(1)) if code is None and match else code
+    if not isinstance(code, int) or not 100 <= code <= 599:
+        code = None
+    if type(error).__name__ in {'APITimeoutError', 'ProviderRequestDeadline'} or 'run time budget exceeded' in str(error):
+        category = 'probe_timeout'
+    elif type(error).__name__ == 'APIConnectionError' or 'category=connection' in str(error):
+        category = 'connection_unreachable'
+    elif code is not None:
+        category = 'provider_http_error'
+    elif isinstance(error, ProbeFailure):
+        category = 'protocol_validation_failed'
+    else:
+        category = 'probe_failed'
+    return dict(error_code=category, http_status=code)
 
 
 def _experiment_guard(payload):
@@ -315,4 +346,4 @@ def worker():
         result = _backend_request(payload) if payload['verification'] == 'backend' else _request(payload)
         _emit('done', ok=True, **result)
     except Exception as error:
-        _emit('done', ok=False, error=_safe_error(error, payload), error_type=type(error).__name__)
+        _emit('done', ok=False, error=_safe_error(error, payload), error_type=type(error).__name__, **_error_metadata(error))

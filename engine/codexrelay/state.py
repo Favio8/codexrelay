@@ -279,8 +279,17 @@ class Store:
                 if group['used_continuations'] >= group['max_auto_continuations']: raise ValueError('AUTHORIZATION_REQUIRED: continuation limit reached')
                 previous = json.loads(db.execute('SELECT payload FROM tasks WHERE id=?', (group['latest_run_id'],)).fetchone()[0])
                 if previous['status'] in groups.ACTIVE: raise ValueError('previous run has not exited')
+                latest_checkpoint = previous.get('checkpoint') or {}
+                if (group.get('latest_checkpoint_id') != continuation['checkpoint_id'] or
+                        latest_checkpoint.get('checkpoint_id') != continuation['checkpoint_id'] or
+                        latest_checkpoint.get('sha256') != continuation['checkpoint_sha256']):
+                    raise ValueError('CHECKPOINT_VERSION_STALE: verify the latest checkpoint before continuing')
                 verification = group.get('verification_head') or {}
-                if verification.get('id') != continuation['verification_id'] or verification.get('disposition') != 'verified_partial': raise ValueError('valid partial verification required')
+                if verification.get('id') != continuation['verification_id'] or verification.get('disposition') != 'verified_partial' or verification.get('status') != 'passed': raise ValueError('valid partial verification required')
+                task_verification = previous.get('verification') or {}
+                if (task_verification.get('id') != verification.get('id') or
+                        task_verification.get('status') != 'passed' or task_verification.get('disposition') != 'verified_partial'):
+                    raise ValueError('valid partial verification required for the current run')
                 if verification.get('checkpoint_id') != continuation['checkpoint_id'] or verification.get('checkpoint_sha256') != continuation['checkpoint_sha256']: raise ValueError('CHECKPOINT_VERSION_STALE')
                 if (previous.get('failure') or {}).get('code') in {'provider_auth', 'provider_quota'} and previous.get('provider_revision') == provider.get('revision'): raise ValueError('PROVIDER_CONFIGURATION_REQUIRED: do not repeat authentication/quota failure')
                 if title != '\n'.join(verification['remaining_items']): raise ValueError('remaining_task must match independently verified remaining_items')

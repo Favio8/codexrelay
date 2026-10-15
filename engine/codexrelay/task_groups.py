@@ -248,6 +248,8 @@ def verify(store, task, passed, evidence, disposition=None, checkpoint_id=None, 
     if task['status'] in ACTIVE or not evidence.strip(): raise ValueError('verification requires ended execution and evidence')
     disposition = disposition or ('verified_complete' if passed else 'rejected')
     if disposition not in {'verified_complete', 'verified_partial', 'rejected', 'needs_more_evidence'}: raise ValueError('invalid disposition')
+    if disposition in {'verified_complete', 'verified_partial'} and not passed:
+        raise ValueError('VERIFICATION_NOT_PASSED: accepted results require passed=true')
     if disposition == 'verified_partial' and not remaining_items: raise ValueError('remaining items required for continuation')
     meta = task.get('checkpoint')
     changed = []

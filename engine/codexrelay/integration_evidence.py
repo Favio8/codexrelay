@@ -77,7 +77,7 @@ def record_call(store, *, instance, workspace, tool, success, codex_home=None, c
     return _append(store, CALLS_KEY, record, 1000)
 
 
-def evidence_status(store, codex_home=None, *, instance=None, workspace=None, client_session_id=None):
+def evidence_status(store, codex_home=None, *, instance=None, workspace=None, client_session_id=None, client_report_id=None):
     current = binding(codex_home)
     normalized = canonical(workspace) if workspace else None
     with store.connect() as db:
@@ -103,9 +103,18 @@ def evidence_status(store, codex_home=None, *, instance=None, workspace=None, cl
         return {**record, "current": not reasons, "stale_reasons": reasons}
 
     reports = [annotated(item) for item in store.setting(REPORTS_KEY, [])]
-    calls = [annotated(item) for item in store.setting(CALLS_KEY, [])]
-    applicable_reports = [item for item in reports if item["current"]]
+    applicable_reports = [item for item in reports if item["current"] and (not client_report_id or item['id'] == client_report_id)]
     selected_report = applicable_reports[-1] if applicable_reports else None
+    calls = []
+    for item in store.setting(CALLS_KEY, []):
+        call = annotated(item)
+        if selected_report:
+            if item.get('client_kind') != selected_report.get('client_kind'):
+                call['stale_reasons'].append('different_client_kind')
+            if selected_report.get('client_version') is not None and item.get('client_version') != selected_report['client_version']:
+                call['stale_reasons'].append('different_client_version')
+            call['current'] = not call['stale_reasons']
+        calls.append(call)
     # A Desktop status check has no identity for the user's current chat. It
     # must not silently choose another live instance as the current client.
     bound = bool(instance and normalized and client_session_id)
@@ -118,6 +127,7 @@ def evidence_status(store, codex_home=None, *, instance=None, workspace=None, cl
     verified_tools = set(visible).intersection(independently_observed) if real_client and bound else set()
     verified_capabilities = capability_states(verified_tools)
     return {"binding": current, "current_chat_bound": bound, "client_reports": reports[-20:],
+            "selected_report_id": client_report_id, "selection_current": bool(bound and selected_report),
             "latest_report": selected_report, "client_report_capabilities": capability_states(visible, not bool(selected_report)),
             "actual_calls": calls[-100:], "successfully_called_tools": called_tools,
             "actual_call_capabilities": capability_states(called_tools),
@@ -132,5 +142,13 @@ def verification_instructions(codex_home=None):
     contract = manifest()
     return {"contract_version": contract["contract_version"], "runtime_fingerprint": contract["fingerprint"],
             "required_tools": [item["name"] for item in contract["tools"]],
-            "prompt": "在这个 Codex 聊天调用 codexrelay ping，记录 instance、workspace 和版本。枚举本聊天可见的 codexrelay 工具；不要仅复述服务端目录。将 client_kind（codex_desktop/codex_cli）、client_version（未知填 null）、client_session_id（本聊天稳定标识）、instance、workspace、visible_tools 导入 App。随后按只读、编码恢复核验和剩余事项续作案例独立验证；模型任务需另行授权。",
+            "prompt": "在本聊天调用 codexrelay ping，记录 instance、workspace 和版本；枚举实际可见工具，不要仅复述服务端目录。"
+                      "为本次验证确认一个稳定的会话标识（可用明确标记的本地验证 ID，不冒充未知宿主 ID）。"
+                      "在同一聊天调用 bind_client_session(session_id=该标识, root_session_id=已知 root 标识或同一本地验证 ID, "
+                      "client_kind=desktop 或 cli, confirmed=true, client_version=已知版本或 null)，保存返回的 id。"
+                      "再调用 ping(client_binding_id=该 id)；后续启动/委托、状态/结果、组和 checkpoint 查询、核验、恢复、续作与取消都带同一个 client_binding_id。"
+                      "未带绑定的调用仍正常执行，但任务所属聊天不能冒充本次调用者，也不会升级为本聊天的调用证据。"
+                      "输出导入报告 JSON，仅包含 instance、workspace、client_kind（codex_desktop/codex_cli）、client_version、"
+                      "client_session_id（与绑定的 session_id 完全相同）、visible_tools。保存到 App 后，在“核对的聊天”明确选择该报告。"
+                      "只读、编码恢复核验及续作案例按用户已授权范围执行；不要为检查而更改委托开关或发起未授权模型请求。",
             "codex_home": binding(codex_home)["codex_home"]}

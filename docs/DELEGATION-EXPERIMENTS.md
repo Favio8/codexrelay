@@ -6,9 +6,9 @@
 
 ## 本地入口
 
-App 的“收益评测”页面可以创建草稿、冻结材料、预览累计额度、读取试次指令、绑定新聊天、导入主动选择的日志、登记执行结束、运行评分和查看报告。界面默认使用当前供应商 Flash 档位；创建后冻结，后台改供应商不改变既有清单。主模型名称或供应商未知时，不产生完整计量或完整参考价收益。
+App 的“收益评测”页面可以创建草稿、冻结材料、预览累计额度、读取试次指令、绑定新聊天、导入主动选择的日志、登记执行结局、运行评分和查看报告。界面可选择当前供应商 Flash／Pro 档位、主模型推理设置及环境，分别记录订阅／API 计费方式，并填写主模型和外部模型的参考价格、来源及核对时间。单价单位为每百万 Token，缓存价格可留空保持未知；授权金额上限显示实验冻结币种。创建后条件冻结，页面继续改设置只影响新草稿，后台改供应商不改变既有清单。主模型名称或供应商未知时，不产生完整计量或完整参考价收益。
 
-复杂失败、主代理接手、关联子聊天、完整模型设置和价格通过本地 CLI 或同一 RPC 合同登记。CLI 参数为 JSON 文件，路径和数据不会通过 shell 字符串拼装。所有调用明确指定隔离状态目录，例如：
+界面可登记失败、取消、预算停止、中断、超时、未派工及主代理接手；未派工需选择实际原因。关联子聊天和分阶段耗时通过本地 CLI 或同一 RPC 合同登记。操作失败保留错误，不自动重放或用刷新掩盖失败。CLI 参数为 JSON 文件，路径和数据不会通过 shell 字符串拼装。所有调用明确指定隔离状态目录，例如：
 
 ```powershell
 $env:PYTHONPATH = (Join-Path (Get-Location) 'engine')
@@ -20,7 +20,9 @@ $env:PYTHONPATH = (Join-Path (Get-Location) 'engine')
 
 `prepare.json` 包含 `experiment_id`、绝对 `workspace_root` 和 `repetitions`。默认一次生成 5 案例 × A/B/C = 15 个独立 workspace。三次生成 45 试次，每轮轮换 A/B/C、B/C/A、C/A/B 的顺序。初始文件、任务、验收器、条件和清单均有 hash。已存在的实验目录和已开始的试次不被重用；中断重做需新试次身份，不重置旧消耗。
 
-RPC 是 `evaluation`，参数为 `{action, params}`。`action` 使用 Python 方法名，包括 `create_experiment`、`prepare_experiment`、`describe`、`authorization_preview`、`authorize`、`start_trial`、`bind_session`、`trial_instruction`、`import_main_log`、`record_main_usage`、`finish_trial`、`score_trial`、`report` 和 `set_state`。该 API 不暴露任意 SQL、任意方法、手工 request reservation 或伪造 Run 入口。
+RPC 是 `evaluation`，参数为 `{action, params}`。`action` 使用 Python 方法名，包括 `create_experiment`、`prepare_experiment`、`describe`、`authorization_preview`、`authorize`、`start_trial`、`bind_session`、`add_related_sessions`、`trial_instruction`、`import_main_log`、`record_main_usage`、`finish_trial`、`score_trial`、`report` 和 `set_state`。该 API 不暴露任意 SQL、任意方法、手工 request reservation 或伪造 Run 入口。
+
+任务开始后创建了新的主模型子聊天时，先调用 `add_related_sessions(trial_id, related_sessions=[实际子聊天 ID], confirmed=true)`，再导入该子聊天日志。CLI 对应 `add-related --params 文件.json`。操作只追加明确确认的会话，不替换 root、主 session 或客户端；重复追加幂等，其他试次已占用的 session 会被拒绝。普通主聊天绑定仍不能改成别的聊天，历史未归属／冲突记录不会借此自动清空。
 
 ## 冻结案例与独立判据
 
@@ -56,10 +58,12 @@ Codex 主模型不经过本产品网络边界。产品只能统计明确绑定�
 4. B/C 调用 `create_task_group` 时必传 `experiment_id`、`trial_id`、`client_binding_id`，以及完整目标、类型、绝对 task_root、write_paths 和 acceptance。再把返回的 group_id 传给 `start_agent`／`start_agent_readonly`。工作区、真实模型、修订、档位和后端必须与冻结条件相同；实验 workspace 的未关联普通任务会被拒绝，不能规避累计账本。
 5. 执行结束后 Codex 读取真实文件／测试与 checkpoint；核对事务及 Pi 工作区检查的当前 hash，再用精确 ID 确认恢复事项。只在独立依据充分时记录 verified_complete 或 verified_partial；summary 本身不授予通过。get_task_recovery／ack 调用带同一 client_binding_id。续作保留同一组、当前 checkpoint、verification ID 及幂等键，只传已核验 remaining_items。
 6. 通过 `finish_trial` 登记实际结局。失败、取消、超时、budget_stopped、interrupted、not_delegated 和 completed_by_parent 均保留。未派工原因写 decision／disabled／integration／policy／error，不编造外部 Run。结构化答案保存于用户选择的本地证据目录，评分实际文件和答案。
-7. 明确选择本条日志并 `import_main_log(trial_id,path,confirmed_session_id)`；原始 JSONL 保留在所选目录。仅统计与已绑定 session/root 相符的计数，保存实际 model/provider 与来源指纹。重复、fork、截断、无 usage、混入其他聊天、未知／不同实际模型或供应商都会降低覆盖。未知主模型不能套用冻结参考价。没有宿主日志时报告计量不足。
+7. 明确选择本条日志并 `import_main_log(trial_id,path,confirmed_session_id)`；原始 JSONL 保留在所选目录。仅统计与已绑定 session/root 相符的计数，保存实际 model/provider 与来源指纹。同文件重读和正常追加幂等，不重复计数，也不永久降低覆盖。明确绑定的单调累计计数无需供应商 response ID；逐请求与累计来源按会话协调，不能把同一批 Token 加两次。无法证明重叠时保留来源统计和已知下界，不计算完整净收益。真实冲突、fork、截断、无 usage、混入其他聊天、未知／不同实际模型或供应商仍降低覆盖。未知主模型不能套用冻结参考价。没有宿主日志时报告计量不足。
 8. `score_trial` 后生成完整 report。每条 A 与同案例／重复轮次的 B/C 配对，查看质量、覆盖、成本和耗时；没有完整计量的配对不输出完整净差。人工原始聊天证据与统计报告分别保存，不把聊天自述当独立客户端验收。
 
 不需要操作者手写每个 MCP 参数：试次指令已包含精确 experiment/trial/workspace、group creation 模板和后续 ID 占位；只需把实际客户端与返回的 ID 补齐。没有可以控制真实 Desktop 的 API 时，上述开新聊天、确认身份及提交目标是必须保留的人工步骤。
+
+日志导入使用流式读取和哈希，不再按 16 MiB 整文件大小拒绝。每次核对读取开始时的固定前缀，正常追加可在下次导入；读取过的前缀被改写或截断仍记缺口。未写完的末尾记录暂缓解析，补完后重新导入；超长单行按有界块跳过并保留异常，不阻止后面的正常用量记录。历史版本已留下的冲突／来源元数据缺失不自动改判，需保留原记录并建立新的可复核试次。
 
 ## 六场景真实客户端验收清单
 

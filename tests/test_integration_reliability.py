@@ -140,7 +140,7 @@ class IntegrationReliabilityTests(unittest.TestCase):
         result = Service(self.store).dispatch("integration_apply_plan", {"plan": plan})
         doc = tomlkit.parse(self.config.read_text(encoding="utf-8"))
         entry = doc["mcp_servers"]["codexrelay"]
-        self.assertEqual(entry["enabled_tools"], ["ping", "user-extra-tool", "start_agent_readonly", "get_task_status", "get_task_result"])
+        self.assertEqual(entry["enabled_tools"], ["ping", "user-extra-tool", "start_agent_readonly", "get_task_status", "get_task_result", "bind_client_session", "get_client_evidence"])
         self.assertEqual(entry["disabled_tools"], ["resume_agent"])
         self.assertEqual(entry["tools"]["cancel_task"]["approval_mode"], "always")
         self.assertIn("# keep this comment", self.config.read_text(encoding="utf-8"))
@@ -242,7 +242,7 @@ class IntegrationReliabilityTests(unittest.TestCase):
         report = record_client_report(self.store, **args, visible_tools=sorted(TOOL_NAMES), client_kind="codex_desktop", client_version="fixture")
         self.assertEqual(report["source"], "user_report")
         self.assertEqual(self.status(instance="instance-1", workspace=self.workspace, client_session_id="chat-1")["client_evidence"]["state"], "waiting_client_verification")
-        record_call(self.store, **args, tool="ping", success=True, client_kind="codex_desktop")
+        record_call(self.store, **args, tool="ping", success=True, client_kind="codex_desktop", client_version="fixture")
         evidence = evidence_status(self.store, **{key: value for key, value in args.items() if key != "codex_home"}, codex_home=self.home)
         self.assertEqual(evidence["state"], "partially_verified")
         self.assertEqual(evidence["verified_tools"], ["ping"])
@@ -270,6 +270,137 @@ class IntegrationReliabilityTests(unittest.TestCase):
         self.assertIn("config_sha256_changed", reasons)
         self.assertIn("rules_sha256_changed", reasons)
         self.assertEqual(stale["verified_tools"], [])
+
+    def test_fresh_basic_install_exposes_readonly_and_identity_tools_without_coding(self):
+        plan = self.plan(capability_scope='basic')
+        expected = {'ping', 'start_agent_readonly', 'get_task_status', 'get_task_result', 'cancel_task',
+                    'bind_client_session', 'get_client_evidence'}
+        self.assertEqual(set(plan['resulting_configuration']['effective_tools']), expected)
+        self.assertNotIn('start_agent', plan['resulting_configuration']['effective_tools'])
+        self.assertNotIn('resume_agent', plan['resulting_configuration']['effective_tools'])
+        result = Service(self.store).dispatch('integration_apply_plan', {'plan': plan})
+        document = tomlkit.parse(self.config.read_text(encoding='utf-8'))
+        self.assertEqual(set(document['mcp_servers']['codexrelay']['enabled_tools']), expected)
+        self.assertTrue(result['registered'])
+        self.assertEqual(result['configuration_prediction']['capabilities'][0]['state'], 'available')
+        self.assertEqual(result['state'], 'capabilities_limited')
+
+    def test_fresh_full_install_keeps_complete_contract(self):
+        plan = self.plan(capability_scope='full')
+        self.assertEqual(set(plan['resulting_configuration']['effective_tools']), TOOL_NAMES)
+        self.assertIn('start_agent', plan['resulting_configuration']['effective_tools'])
+        self.assertIn('resume_agent', plan['resulting_configuration']['effective_tools'])
+
+    def test_cross_runtime_owned_repair_previews_command_and_preserves_ownership(self):
+        self.registration(enabled_tools=['ping'])
+        original = str(Path(sys.executable).resolve())
+        key = 'integration_registration:' + str(self.home.resolve())
+        self.store.set_setting(key, {'command': original})
+        replacement = self.base / 'another bundled interpreter.exe'
+        replacement.touch()
+        with patch.object(subject.sys, 'executable', str(replacement)):
+            self.assertTrue(self.status()['registered'])
+            plan = self.plan()
+            command = next(item for item in plan['changes'] if item['operation'] == 'update_owned_runtime')
+            self.assertEqual(command['before'], original)
+            self.assertEqual(command['after'], str(replacement.resolve()))
+            result = Service(self.store).dispatch('integration_apply_plan', {'plan': plan})
+            self.assertTrue(result['registered'])
+            document = tomlkit.parse(self.config.read_text(encoding='utf-8'))
+            self.assertEqual(document['mcp_servers']['codexrelay']['command'], str(replacement.resolve()))
+            self.assertEqual(self.store.setting(key)['command'], document['mcp_servers']['codexrelay']['command'])
+            self.assertEqual(document['mcp_servers']['other']['command'], 'other.exe')
+
+    def test_rules_only_cross_runtime_repair_leaves_actual_command_and_ownership_unchanged(self):
+        self.registration()
+        self.rules.write_text('User rule\n', encoding='utf-8')
+        original = str(Path(sys.executable).resolve())
+        key = 'integration_registration:' + str(self.home.resolve())
+        self.store.set_setting(key, {'command': original})
+        replacement = self.base / 'new interpreter.exe'
+        replacement.touch()
+        with patch.object(subject.sys, 'executable', str(replacement)):
+            plan = self.plan(update_registration=False)
+            self.assertFalse(any(item['operation'] == 'update_owned_runtime' for item in plan['changes']))
+            result = subject.apply_plan(self.store, plan)
+            self.assertTrue(result['registered'])
+        self.assertEqual(self.store.setting(key)['command'], original)
+        self.assertEqual(tomlkit.parse(self.config.read_text(encoding='utf-8'))['mcp_servers']['codexrelay']['command'], original)
+
+    def test_post_write_external_command_edit_is_not_registered_as_owned(self):
+        self.registration(enabled_tools=['ping'])
+        planned_command = str(Path(sys.executable).resolve())
+        foreign_command = self.base / 'externally registered interpreter.exe'
+        foreign_command.touch()
+        plan, replace = self.plan(), subject.replace_checked
+        def edit_after_write(path, previous, value):
+            result = replace(path, previous, value)
+            if path.name == 'config.toml':
+                edited = tomlkit.parse(path.read_text(encoding='utf-8'))
+                edited['mcp_servers']['codexrelay']['command'] = str(foreign_command)
+                path.write_text(tomlkit.dumps(edited), encoding='utf-8')
+            return result
+        with patch.object(subject, 'replace_checked', side_effect=edit_after_write):
+            result = subject.apply_plan(self.store, plan)
+        receipt = self.store.setting('integration_registration:' + str(self.home.resolve()))
+        self.assertEqual(receipt['command'], planned_command)
+        self.assertEqual(tomlkit.parse(self.config.read_text(encoding='utf-8'))['mcp_servers']['codexrelay']['command'], str(foreign_command))
+        self.assertFalse(result['registered'])
+        self.assertEqual(result['configuration_prediction']['registration_state'], 'foreign')
+        self.assertTrue(self.plan()['conflicts'])
+
+    def test_explicit_report_selection_reaches_verified_status_and_does_not_mix_chats(self):
+        self.registration()
+        self.store.heartbeat('selected-instance', self.workspace)
+        common = dict(instance='selected-instance', workspace=str(self.workspace), codex_home=self.home,
+                      client_kind='codex_desktop')
+        first = record_client_report(self.store, **common, client_session_id='chat-a', visible_tools=list(CANONICAL_TOOLS))
+        for name in CANONICAL_TOOLS:
+            record_call(self.store, **common, client_session_id='chat-a', tool=name, success=True)
+        second = record_client_report(self.store, **common, client_session_id='chat-b', visible_tools=['ping'])
+        record_call(self.store, **common, client_session_id='chat-b', tool='ping', success=True)
+        service = Service(self.store)
+        unselected = service.dispatch('integration_status', {'codex_home': str(self.home)})
+        self.assertEqual(unselected['client_evidence']['state'], 'waiting_client_verification')
+        self.assertFalse(unselected['client_evidence']['current_chat_bound'])
+        first_selection = dict(codex_home=str(self.home), client_report_id=first['id'], instance='selected-instance',
+                               workspace=str(self.workspace), client_session_id='chat-a')
+        for method in ('integration_status', 'integration_preview'):
+            selected = service.dispatch(method, first_selection)
+            self.assertEqual(selected['client_evidence']['state'], 'current_chat_verified')
+            self.assertTrue(selected['client_evidence']['selection_current'])
+            self.assertEqual(selected['client_evidence']['latest_report']['id'], first['id'])
+        second_selection = {**first_selection, 'client_report_id': second['id'], 'client_session_id': 'chat-b'}
+        partial = service.dispatch('integration_status', second_selection)
+        self.assertEqual(partial['client_evidence']['state'], 'partially_verified')
+        self.assertEqual(partial['client_evidence']['verified_tools'], ['ping'])
+        self.config.write_bytes(self.config.read_bytes() + b'\n# external change\n')
+        stale = service.dispatch('integration_status', first_selection)
+        self.assertFalse(stale['client_evidence']['selection_current'])
+        self.assertEqual(stale['client_evidence']['state'], 'waiting_client_verification')
+
+    def test_verification_instructions_connect_identity_ping_report_and_selection(self):
+        prompt = self.status()['verification_instructions']['prompt']
+        for required in ('bind_client_session', 'ping(client_binding_id=', 'client_session_id', '核对的聊天'):
+            self.assertIn(required, prompt)
+
+    def test_selected_client_kind_and_known_version_do_not_borrow_old_call_evidence(self):
+        self.registration()
+        self.store.heartbeat('reported-client-instance', self.workspace)
+        context=dict(instance='reported-client-instance', workspace=str(self.workspace), client_session_id='reported-chat', codex_home=self.home)
+        for name in CANONICAL_TOOLS:
+            record_call(self.store, **context, tool=name, success=True, client_kind='codex_cli', client_version='old-cli-version')
+        report=record_client_report(self.store, **context, visible_tools=list(CANONICAL_TOOLS), client_kind='codex_desktop', client_version='current-desktop-version')
+        evidence=evidence_status(self.store, **context, client_report_id=report['id'])
+        self.assertEqual(evidence['state'], 'waiting_client_verification')
+        self.assertEqual(evidence['verified_tools'], [])
+        self.assertTrue(all('different_client_kind' in call['stale_reasons'] and 'different_client_version' in call['stale_reasons'] for call in evidence['actual_calls']))
+        record_call(self.store, **context, tool='get_task_result', success=True, client_kind='codex_desktop', client_version='old-desktop-version')
+        record_call(self.store, **context, tool='ping', success=True, client_kind='codex_desktop', client_version='current-desktop-version')
+        evidence=evidence_status(self.store, **context, client_report_id=report['id'])
+        self.assertEqual(evidence['state'], 'partially_verified')
+        self.assertEqual(evidence['verified_tools'], ['ping'])
+        self.assertIn('different_client_version', evidence['actual_calls'][-2]['stale_reasons'])
 
 
 if __name__ == "__main__":

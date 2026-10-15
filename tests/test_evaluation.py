@@ -1,5 +1,6 @@
 """Independent local experiment contracts; no network, credentials or daily settings."""
 import json
+import io
 import sys
 import tempfile
 import unittest
@@ -198,7 +199,7 @@ class EvaluationTests(unittest.TestCase):
         self.assertFalse(row['coverage']['usage_complete'])
         self.assertIn('unbound_or_mixed_session', row['coverage']['issues'])
 
-    def test_duplicate_fork_and_missing_related_sessions_reduce_coverage(self):
+    def test_fork_and_missing_related_sessions_reduce_coverage_even_after_idempotent_reimport(self):
         exp = self.authorize(self.prepare())
         trial = self.start(exp, 'A')
         self.ev.bind_session(trial['id'], 'root', 'root', 'desktop', True, forked=True, related_sessions=['child'])
@@ -207,8 +208,9 @@ class EvaluationTests(unittest.TestCase):
         self.ev.record_main_usage(*args)
         row = self.ev.report(exp['id'])['trials'][0]
         self.assertEqual(row['main_tokens'], 15)
-        for issue in ('fork_inheritance', 'duplicate_usage_event', 'missing_related_session_usage'):
+        for issue in ('fork_inheritance', 'missing_related_session_usage'):
             self.assertIn(issue, row['coverage']['issues'])
+        self.assertNotIn('duplicate_usage_event',row['coverage']['issues'])
         self.assertIsNone(row['total_reference_estimate'])
 
     def test_main_model_limit_is_observation_and_stops_followup(self):
@@ -335,7 +337,7 @@ class EvaluationTests(unittest.TestCase):
         self.assertNotIn('BODY_NEVER_EXPORT', json.dumps(self.ev.report(exp['id'])))
         self.ev.import_main_log(trial['id'], str(log), 'session-1')
         row = self.ev.report(exp['id'])['trials'][0]
-        self.assertFalse(row['coverage']['usage_complete'])
+        self.assertNotIn('duplicate_usage_event',row['coverage']['issues'])
         self.assertEqual(row['main_tokens'], 15)
         outside = self.root / 'not-selected.jsonl'
         outside.write_text(log.read_text(encoding='utf-8'), encoding='utf-8')
@@ -445,6 +447,392 @@ class EvaluationTests(unittest.TestCase):
         self.assertIsNone(sum_costs([dict(prompt=100,completion=1,cached_input=20,cache_write_input=0)],price))
         self.assertIsNone(sum_costs([dict(prompt=100,completion=1,cached_input=None,cache_write_input=0)],price))
         self.assertEqual(sum_costs([dict(prompt=100,completion=1,cached_input=0,cache_write_input=0)],price),{'low':'0.00102','high':'0.00102'})
+
+    def log_trial(self):
+        exp=self.authorize(self.prepare())
+        folder=self.root/'logs';folder.mkdir()
+        caps=exp['authorization']['caps'];scope=dict(usage_directory=str(folder),raw_evidence_directory=None)
+        preview=self.ev.authorization_preview(exp['id'],caps,scope)
+        self.ev.authorize(exp['id'],caps,scope,preview['preview_sha256'],True)
+        trial=self.start(exp,'A');session='log-'+trial['id']
+        self.ev.bind_session(trial['id'],session,session,'cli',True)
+        path=folder/'rollout.jsonl'
+        header=[dict(type='session_meta',timestamp='2026-10-15T01:00:00Z',payload=dict(id=session,model_provider='fixture-openai')),
+                dict(type='turn_context',payload=dict(model='codex-fixture',model_provider='fixture-openai'))]
+        return exp,trial,session,path,header
+
+    @staticmethod
+    def log_direct(session,stamp,identifier,prompt=10,completion=5):
+        return dict(type='token_usage_record',timestamp=f'2026-10-15T01:00:{stamp:02d}Z',
+                    payload=dict(response_id=identifier,thread_id=session,usage=dict(input_tokens=prompt,output_tokens=completion,cached_input_tokens=0,cache_write_input_tokens=0)))
+
+    @staticmethod
+    def log_cumulative(stamp,prompt,completion,identifier=None):
+        payload=dict(type='token_count',info=dict(total_token_usage=dict(input_tokens=prompt,output_tokens=completion,cached_input_tokens=0,cache_write_input_tokens=0)))
+        if identifier:payload['response_id']=identifier
+        return dict(type='event_msg',timestamp=f'2026-10-15T01:00:{stamp:02d}Z',payload=payload)
+
+    def import_records(self,trial,session,path,records):
+        path.write_text(''.join(json.dumps(r)+'\n' for r in records),encoding='utf-8')
+        return self.ev.import_main_log(trial['id'],str(path),session)
+
+    def reported_row(self,exp,trial):
+        return next(r for r in self.ev.report(exp['id'])['trials'] if r['trial_id']==trial['id'])
+
+    def test_normal_same_file_reimport_and_append_keep_complete_metering(self):
+        exp,trial,session,path,records=self.log_trial()
+        records.append(self.log_direct(session,1,'first'))
+        self.import_records(trial,session,path,records)
+        before=self.reported_row(exp,trial)
+        self.assertTrue(before['coverage']['usage_complete'])
+        unchanged=self.ev.import_main_log(trial['id'],str(path),session)
+        self.assertEqual(unchanged['status'],'unchanged')
+        self.assertEqual(unchanged['records_unchanged'],1)
+        records.append(self.log_direct(session,2,'second'))
+        added=self.import_records(trial,session,path,records)
+        self.assertEqual((added['records_added'],added['records_unchanged']),(1,1))
+        after=self.reported_row(exp,trial)
+        self.assertTrue(after['coverage']['usage_complete'])
+        self.assertTrue(after['coverage']['priced'])
+        self.assertEqual(after['main_tokens'],30)
+        self.assertEqual(after['coverage']['issues'],[])
+
+    def test_response_id_reuse_at_a_different_time_is_still_ambiguous(self):
+        exp,trial,session,path,records=self.log_trial()
+        records.extend([self.log_direct(session,1,'reused'),self.log_direct(session,2,'reused')])
+        result=self.import_records(trial,session,path,records)
+        self.assertIn('conflicting_usage_event',result['issues'])
+        row=self.reported_row(exp,trial)
+        self.assertEqual(row['main_tokens'],15)
+        self.assertFalse(row['coverage']['usage_complete'])
+
+    def test_bound_monotonic_cumulative_logs_are_complete_and_idempotent(self):
+        exp,trial,session,path,records=self.log_trial()
+        records.extend([self.log_cumulative(1,10,5),self.log_cumulative(2,20,10)])
+        self.import_records(trial,session,path,records)
+        self.assertTrue(self.reported_row(exp,trial)['coverage']['usage_complete'])
+        records.append(self.log_cumulative(3,30,15))
+        imported=self.import_records(trial,session,path,records)
+        self.assertEqual((imported['records_added'],imported['records_unchanged']),(1,2))
+        row=self.reported_row(exp,trial)
+        self.assertEqual(row['main_tokens'],45)
+        self.assertTrue(row['coverage']['priced'])
+
+    def test_cumulative_reset_still_keeps_a_gap(self):
+        exp,trial,session,path,records=self.log_trial()
+        records.extend([self.log_cumulative(1,10,5),self.log_cumulative(2,5,1),self.log_cumulative(3,8,2)])
+        result=self.import_records(trial,session,path,records)
+        self.assertIn('log_resets',result['issues'])
+        self.assertFalse(self.reported_row(exp,trial)['coverage']['usage_complete'])
+
+    def test_both_log_orders_prefer_direct_for_the_proven_cumulative_window(self):
+        for reverse in (False,True):
+            with self.subTest(reverse=reverse):
+                # New isolated fixture per order; both sequences represent the
+                # same request inside the same cumulative coverage window.
+                helper=EvaluationTests();helper.setUp()
+                try:
+                    exp,trial,session,path,records=helper.log_trial()
+                    pair=[helper.log_direct(session,1,'request-1'),helper.log_cumulative(2,10,5)]
+                    records.extend(reversed(pair) if reverse else pair)
+                    helper.import_records(trial,session,path,records)
+                    row=helper.reported_row(exp,trial)
+                    self.assertEqual(row['main_tokens'],15)
+                    self.assertTrue(row['coverage']['usage_complete'])
+                    self.assertEqual(row['main_usage_streams'][0]['strategy'],'direct_matches_cumulative_window')
+                finally:helper.doCleanups()
+
+    def test_direct_append_resolves_covered_cumulative_without_double_counting(self):
+        exp,trial,session,path,records=self.log_trial()
+        records.append(self.log_cumulative(2,10,5))
+        self.import_records(trial,session,path,records)
+        records.append(self.log_direct(session,1,'request-1'))
+        result=self.import_records(trial,session,path,records)
+        row=self.reported_row(exp,trial)
+        self.assertEqual(row['main_tokens'],15)
+        self.assertTrue(row['coverage']['usage_complete'])
+        self.assertEqual(self.ev.describe(exp['id'])['authorization']['version'],2)
+        with self.store.connect() as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM evaluation_usage_events WHERE trial_id=?',(trial['id'],)).fetchone()[0],2)
+        self.assertEqual(result['issues'],[])
+
+    def test_equal_counters_outside_cumulative_window_do_not_prove_overlap(self):
+        exp,trial,session,path,records=self.log_trial()
+        records.extend([self.log_cumulative(1,10,5),self.log_direct(session,2,'later-request')])
+        result=self.import_records(trial,session,path,records)
+        row=self.reported_row(exp,trial)
+        self.assertIn('usage_stream_coverage_unresolved',result['issues'])
+        self.assertFalse(row['coverage']['usage_complete'])
+        self.assertEqual(row['main_tokens_basis'],'reported_lower_bound')
+        self.assertEqual(row['main_usage_streams'][0]['cumulative_tokens'],15)
+        self.assertEqual(row['main_usage_streams'][0]['direct_tokens'],15)
+
+    def test_stable_distinct_response_ids_are_not_merged_as_the_same_request(self):
+        exp,trial,session,path,records=self.log_trial()
+        records.extend([self.log_cumulative(1,10,5,'earlier-request'),self.log_direct(session,2,'later-request')])
+        self.import_records(trial,session,path,records)
+        row=self.reported_row(exp,trial)
+        self.assertEqual(row['main_tokens'],30)
+        self.assertTrue(row['coverage']['usage_complete'])
+
+    def test_mixed_unbound_session_remains_separate_and_unattributable(self):
+        exp,trial,session,path,records=self.log_trial()
+        records.extend([self.log_cumulative(2,10,5),self.log_direct('other-chat',1,'wrong-session')])
+        self.import_records(trial,session,path,records)
+        row=self.reported_row(exp,trial)
+        self.assertEqual(row['main_tokens'],15)
+        self.assertIn('unbound_or_mixed_session',row['coverage']['issues'])
+        self.assertFalse(row['coverage']['usage_complete'])
+
+    def test_attached_run_denied_before_admission_can_be_recorded_as_not_delegated(self):
+        exp=self.authorize(self.prepare());trial=self.start(exp);self.attach(trial)
+        self.bind_usage(trial)
+        finished=self.ev.finish_trial(trial['id'],'not_delegated',not_delegated_reason='policy')
+        self.assertEqual(len(finished['runs']),1)
+        row=self.reported_row(exp,trial)
+        self.assertFalse(row['delegated'])
+        self.assertEqual(row['not_delegated_reason'],'policy')
+        self.assertTrue(row['coverage']['usage_complete'])
+        self.assertTrue(row['coverage']['priced'])
+        self.assertEqual(row['external_reference_estimate'],{'low':'0','high':'0'})
+
+    def test_admitted_request_still_prevents_a_false_no_delegation_outcome(self):
+        exp=self.authorize(self.prepare());trial=self.start(exp);self.attach(trial);self.reserve(exp,trial)
+        self.ev.settle_request('q1',usage=dict(prompt=10,completion=2,cached_input=0,cache_write_input=0))
+        with self.assertRaisesRegex(ValueError,'provider request was admitted'):
+            self.ev.finish_trial(trial['id'],'not_delegated',not_delegated_reason='policy')
+
+    def test_matching_total_with_contradictory_cache_counters_is_not_complete_overlap(self):
+        exp,trial,session,path,records=self.log_trial()
+        direct=self.log_direct(session,1,'request-1')
+        cumulative=self.log_cumulative(2,10,5)
+        cumulative['payload']['info']['total_token_usage']['cached_input_tokens']=5
+        records.extend([direct,cumulative])
+        imported=self.import_records(trial,session,path,records)
+        row=self.reported_row(exp,trial)
+        self.assertIn('conflicting_usage_streams',imported['issues'])
+        self.assertFalse(row['coverage']['usage_complete'])
+        self.assertEqual(row['main_tokens'],15)
+        self.assertEqual(row['main_usage_streams'][0]['direct_cache_counters']['cached_input'],0)
+        self.assertEqual(row['main_usage_streams'][0]['cumulative_cache_counters']['cached_input'],5)
+
+    def test_related_sessions_can_be_explicitly_added_without_replacing_the_primary_binding(self):
+        from codexrelay.evaluation import dispatch,main
+        exp,trial,session,path,records=self.log_trial()
+        records.append(self.log_direct(session,1,'parent-request'))
+        self.import_records(trial,session,path,records)
+        before=self.ev.describe(exp['id'])['trials'][0]['binding']
+        with self.assertRaisesRegex(ValueError,'explicit confirmation'):
+            self.ev.add_related_sessions(trial['id'],['child'])
+        result=dispatch(self.store,'add_related_sessions',dict(trial_id=trial['id'],related_sessions=['child'],confirmed=True))
+        self.assertEqual(result['added_sessions'],['child'])
+        for key in ('session_id','root_session_id','client_kind','confirmed_at','forked'):
+            self.assertEqual(result['binding'][key],before[key])
+        child_path=path.parent/'child.jsonl'
+        child_records=[dict(type='session_meta',timestamp='2026-10-15T01:00:02Z',payload=dict(id='child',model_provider='fixture-openai')),
+                       dict(type='turn_context',payload=dict(model='codex-fixture',model_provider='fixture-openai')),
+                       self.log_direct('child',3,'child-request',prompt=7,completion=2)]
+        self.import_records(trial,'child',child_path,child_records)
+        row=self.reported_row(exp,trial)
+        self.assertEqual(row['main_tokens'],24)
+        self.assertTrue(row['coverage']['usage_complete'])
+        # The standalone CLI exposes the same explicit extension contract.
+        params=self.root/'add-related.json';params.write_text(json.dumps(dict(trial_id=trial['id'],related_sessions=['cli-child'],confirmed=True)),encoding='utf-8')
+        with patch('sys.stdout',new_callable=io.StringIO) as output:
+            main(['--state',str(self.store.directory),'add-related','--params',str(params)])
+        self.assertEqual(json.loads(output.getvalue())['added_sessions'],['cli-child'])
+
+    def test_related_extension_keeps_cross_trial_ownership_and_does_not_wash_old_mixed_evidence(self):
+        exp,trial,session,path,records=self.log_trial()
+        records.append(self.log_direct('unbound-child',1,'mixed-request'))
+        self.import_records(trial,session,path,records)
+        self.ev.add_related_sessions(trial['id'],['unbound-child'],True)
+        self.assertIn('unbound_or_mixed_session',self.reported_row(exp,trial)['coverage']['issues'])
+        other_exp=self.authorize(self.prepare());other=self.start(other_exp,'A')
+        self.ev.bind_session(other['id'],'another-trial','another-trial','cli',True)
+        with self.assertRaisesRegex(ValueError,'already bound'):
+            self.ev.add_related_sessions(trial['id'],['another-trial'],True)
+        self.assertEqual(self.ev.add_related_sessions(trial['id'],['unbound-child'],True)['added_sessions'],[])
+
+    def test_user_selected_normal_log_larger_than_16_mib_imports_with_bounded_reads(self):
+        exp,trial,session,path,records=self.log_trial()
+        filler=(json.dumps(dict(type='event_msg',payload=dict(type='agent_message',message='x'*4096)))+'\n').encode()
+        with path.open('wb') as stream:
+            for record in records:stream.write((json.dumps(record)+'\n').encode())
+            for _ in range(4350):stream.write(filler)
+            stream.write((json.dumps(self.log_direct(session,1,'long-log-request'))+'\n').encode())
+        self.assertGreater(path.stat().st_size,16*1024*1024)
+        original_open=Path.open
+        reads=[]
+        class BoundedReader:
+            def __init__(reader,stream):reader.stream=stream
+            def __enter__(reader):reader.stream.__enter__();return reader
+            def __exit__(reader,*args):return reader.stream.__exit__(*args)
+            def read(reader,size=-1):
+                self.assertGreaterEqual(size,0);self.assertLessEqual(size,1024*1024);reads.append(size)
+                return reader.stream.read(size)
+            def readline(reader,size=-1):
+                self.assertGreaterEqual(size,0);self.assertLessEqual(size,1024*1024+1);reads.append(size)
+                return reader.stream.readline(size)
+        def checked_open(value,*args,**kwargs):
+            opened=original_open(value,*args,**kwargs)
+            return BoundedReader(opened) if value==path and args and args[0]=='rb' else opened
+        with patch.object(Path,'open',checked_open):
+            result=self.ev.import_main_log(trial['id'],str(path),session)
+        self.assertTrue(reads)
+        self.assertEqual(result['records_added'],1)
+        self.assertEqual(result['issues'],[])
+        self.assertEqual(self.reported_row(exp,trial)['main_tokens'],15)
+        self.assertTrue(self.reported_row(exp,trial)['coverage']['usage_complete'])
+
+    def test_oversized_line_is_skipped_in_chunks_and_later_usage_is_not_lost(self):
+        exp,trial,session,path,records=self.log_trial()
+        with path.open('wb') as stream:
+            for record in records:stream.write((json.dumps(record)+'\n').encode())
+            stream.write(b'{"type":"event_msg","payload":{"message":"')
+            for _ in range(40):stream.write(b'x'*65536)
+            stream.write(b'"}}\n')
+            stream.write(json.dumps(self.log_direct(session,1,'after-long-line')).encode())
+        result=self.ev.import_main_log(trial['id'],str(path),session)
+        self.assertEqual(result['records_added'],1)
+        self.assertIn('oversized_log_line',result['issues'])
+        self.assertFalse(result['deferred_tail'])
+        self.assertEqual(self.reported_row(exp,trial)['main_tokens'],15)
+
+    def test_append_during_import_and_partial_tail_completion_do_not_permanently_reduce_coverage(self):
+        from codexrelay import codex_usage
+        exp,trial,session,path,records=self.log_trial()
+        tail=json.dumps(self.log_direct(session,2,'second-request')).encode()
+        initial=b''.join((json.dumps(record)+'\n').encode() for record in records+[self.log_direct(session,1,'first-request')])+tail[:40]
+        path.write_bytes(initial)
+        original=codex_usage.event_record;appended=[]
+        def append_while_reading(event,*args,**kwargs):
+            if event.get('type')=='token_usage_record' and not appended:
+                with path.open('ab') as stream:stream.write(tail[40:]+b'\n')
+                appended.append(True)
+            return original(event,*args,**kwargs)
+        with patch.object(codex_usage,'event_record',append_while_reading):
+            first=self.ev.import_main_log(trial['id'],str(path),session)
+        self.assertEqual(first['source_bytes'],len(initial))
+        self.assertTrue(first['deferred_tail'])
+        self.assertIn('log_tail_pending',first['issues'])
+        self.assertNotIn('invalid_log_line',first['issues'])
+        self.assertNotIn('log_changed_during_import',first['issues'])
+        self.assertFalse(self.reported_row(exp,trial)['coverage']['usage_complete'])
+        second=self.ev.import_main_log(trial['id'],str(path),session)
+        self.assertEqual((second['records_added'],second['records_unchanged']),(1,1))
+        row=self.reported_row(exp,trial)
+        self.assertEqual(row['main_tokens'],30)
+        self.assertTrue(row['coverage']['usage_complete'])
+        self.assertEqual(row['coverage']['issues'],[])
+
+    def test_mutating_an_already_read_prefix_still_creates_a_real_gap(self):
+        from codexrelay import codex_usage
+        exp,trial,session,path,records=self.log_trial()
+        path.write_text(''.join(json.dumps(r)+'\n' for r in records+[self.log_direct(session,1,'request')]),encoding='utf-8')
+        original=codex_usage.event_record;mutated=[]
+        def mutate_prefix(event,*args,**kwargs):
+            if event.get('type')=='token_usage_record' and not mutated:
+                with path.open('r+b') as stream:stream.write(b' ')
+                mutated.append(True)
+            return original(event,*args,**kwargs)
+        with patch.object(codex_usage,'event_record',mutate_prefix):
+            result=self.ev.import_main_log(trial['id'],str(path),session)
+        self.assertIn('log_changed_during_import',result['issues'])
+        self.assertFalse(self.reported_row(exp,trial)['coverage']['usage_complete'])
+
+    def test_model_switch_does_not_double_add_the_session_cumulative_prefix(self):
+        exp,trial,session,path,records=self.log_trial()
+        records.extend([self.log_direct(session,1,'model-a-request'),
+                        dict(type='turn_context',payload=dict(model='model-b',model_provider='fixture-openai')),
+                        self.log_cumulative(2,20,10)])
+        result=self.import_records(trial,session,path,records)
+        row=self.reported_row(exp,trial)
+        self.assertEqual(row['main_tokens'],30)
+        self.assertIn('cumulative_model_or_provider_allocation_unknown',result['issues'])
+        self.assertFalse(row['coverage']['usage_complete'])
+        with self.store.connect() as db:
+            self.assertEqual(self.ev._consumption(db,exp['id'])['main_reported_tokens'],30)
+
+    def test_same_timestamp_cumulative_checkpoints_do_not_collapse_equal_deltas(self):
+        for identifier in (None,'checkpoint-response'):
+            with self.subTest(response_id=identifier):
+                helper=EvaluationTests();helper.setUp()
+                try:
+                    exp,trial,session,path,records=helper.log_trial()
+                    records.extend([helper.log_cumulative(1,10,5,identifier),helper.log_cumulative(1,20,10,identifier)])
+                    result=helper.import_records(trial,session,path,records)
+                    self.assertEqual(result['records_added'],2)
+                    self.assertEqual(helper.reported_row(exp,trial)['main_tokens'],30)
+                    self.assertTrue(helper.reported_row(exp,trial)['coverage']['usage_complete'])
+                    replay=helper.ev.import_main_log(trial['id'],str(path),session)
+                    self.assertEqual((replay['records_added'],replay['records_unchanged']),(0,2))
+                    if identifier:
+                        records.append(helper.log_direct(session,2,identifier,prompt=20,completion=10))
+                        helper.import_records(trial,session,path,records)
+                        row=helper.reported_row(exp,trial)
+                        self.assertEqual(row['main_tokens'],30)
+                        self.assertTrue(row['coverage']['usage_complete'])
+                finally:helper.doCleanups()
+
+    def test_cumulative_response_label_does_not_make_its_session_prefix_disjoint(self):
+        exp,trial,session,path,records=self.log_trial()
+        records.extend([self.log_direct(session,1,'first-response'),self.log_cumulative(2,20,10,'second-response')])
+        result=self.import_records(trial,session,path,records)
+        row=self.reported_row(exp,trial)
+        self.assertEqual(row['main_tokens'],30)
+        self.assertIn('usage_stream_coverage_unresolved',result['issues'])
+        self.assertFalse(row['coverage']['usage_complete'])
+        with self.store.connect() as db:
+            self.assertEqual(self.ev._consumption(db,exp['id'])['main_reported_tokens'],30)
+
+    def test_same_response_id_does_not_turn_a_cumulative_prefix_into_per_request_usage(self):
+        exp,trial,session,path,records=self.log_trial()
+        records.extend([self.log_direct(session,1,'response'),self.log_cumulative(2,10,5,'response'),self.log_cumulative(2,20,10,'response')])
+        result=self.import_records(trial,session,path,records)
+        row=self.reported_row(exp,trial)
+        self.assertEqual(row['main_tokens'],30)
+        self.assertIn('conflicting_usage_streams',result['issues'])
+        self.assertFalse(row['coverage']['usage_complete'])
+
+    def test_root_identity_is_owned_across_trials_and_cannot_be_added_as_a_foreign_child(self):
+        exp=self.authorize(self.prepare());trial=self.start(exp,'A')
+        self.ev.bind_session(trial['id'],'first-primary','owned-root','cli',True)
+        self.ev.record_main_usage(trial['id'],'root-counter','first-primary','owned-root',dict(prompt=10,completion=5,cached_input=0,cache_write_input=0),
+            'source',model='codex-fixture',provider='fixture-openai')
+        other_exp=self.authorize(self.prepare());other=self.start(other_exp,'A')
+        with self.assertRaisesRegex(ValueError,'already bound'):
+            self.ev.bind_session(other['id'],'second-primary','owned-root','cli',True)
+        with self.assertRaisesRegex(ValueError,'already bound'):
+            self.ev.bind_session(other['id'],'owned-root','second-root','cli',True)
+        self.ev.bind_session(other['id'],'second-primary','second-root','cli',True)
+        with self.assertRaisesRegex(ValueError,'already bound'):
+            self.ev.add_related_sessions(other['id'],['owned-root'],True)
+        # Historical ownership collisions are visible rather than silently
+        # acquiring a complete attribution claim after the new guard ships.
+        with self.store.connect() as db:
+            payload=json.loads(db.execute('SELECT payload FROM evaluation_trials WHERE id=?',(other['id'],)).fetchone()[0])
+            payload['binding']['root_session_id']='owned-root'
+            db.execute('UPDATE evaluation_trials SET payload=? WHERE id=?',(json.dumps(payload),other['id']))
+        row=self.reported_row(exp,trial)
+        self.assertIn('shared_client_session_across_trials',row['coverage']['issues'])
+        self.assertFalse(row['coverage']['attributable'])
+        self.assertFalse(row['coverage']['usage_complete'])
+
+    def test_legacy_cumulative_identity_is_retained_without_unsafe_reimport_or_complete_claim(self):
+        exp,trial,session,path,records=self.log_trial()
+        records.extend([self.log_cumulative(1,10,5),self.log_cumulative(2,20,10)])
+        self.import_records(trial,session,path,records)
+        with self.store.connect() as db:
+            rows=db.execute('SELECT id,payload FROM evaluation_usage_events WHERE trial_id=?',(trial['id'],)).fetchall()
+            for row in rows:
+                payload=json.loads(row[1]);payload.pop('identity_version',None)
+                db.execute('UPDATE evaluation_usage_events SET payload=? WHERE id=?',(json.dumps(payload),row[0]))
+        with self.assertRaisesRegex(ValueError,'LEGACY_CUMULATIVE_IDENTITY'):
+            self.ev.import_main_log(trial['id'],str(path),session)
+        row=self.reported_row(exp,trial)
+        self.assertIn('legacy_cumulative_identity_needs_review',row['coverage']['issues'])
+        self.assertFalse(row['coverage']['usage_complete'])
 
     def test_same_actual_model_does_not_allow_wrong_frozen_slot(self):
         exp=self.authorize(self.prepare());trial=self.start(exp);self.attach(trial)

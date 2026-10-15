@@ -5,15 +5,15 @@
 
 **让 Codex 调用 DeepSeek，把子代理交给一个开关管理。**
 
-[![Release](https://img.shields.io/github/v/release/Favio8/codexrelay?include_prereleases&color=33795a)](https://github.com/Favio8/codexrelay/releases/tag/v0.4.0)
-[![Windows](https://img.shields.io/badge/Windows-x64-0078D4)](https://github.com/Favio8/codexrelay/releases/tag/v0.4.0)
+[![Release](https://img.shields.io/github/v/release/Favio8/codexrelay?include_prereleases&color=33795a)](https://github.com/Favio8/codexrelay/releases/tag/v0.4.1)
+[![Windows](https://img.shields.io/badge/Windows-x64-0078D4)](https://github.com/Favio8/codexrelay/releases/tag/v0.4.1)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![CI](https://github.com/Favio8/codexrelay/actions/workflows/ci.yml/badge.svg)](https://github.com/Favio8/codexrelay/actions/workflows/ci.yml)
 
-简体中文 · [English](README_EN.md) · [下载安装](https://github.com/Favio8/codexrelay/releases/tag/v0.4.0) · [反馈问题](https://github.com/Favio8/codexrelay/issues)
+简体中文 · [English](README_EN.md) · [下载安装](https://github.com/Favio8/codexrelay/releases/tag/v0.4.1) · [反馈问题](https://github.com/Favio8/codexrelay/issues)
 </div>
 
-**0.4.0 Windows Beta** 增加接入完整性与选择性修复预览、Flash/Pro 三层连接验证、客户端与试次证据关联，以及冻结案例和受控收益评测。见 [发布记录](docs/RELEASE-0.4.0.md)、[27 项验收矩阵](docs/DELEGATION-ACCEPTANCE.md) 与 [评测操作说明](docs/DELEGATION-EXPERIMENTS.md)。真实客户端六场景和付费模型对照尚未执行，不宣称实际节省率。
+**0.4.1 Windows Beta** 修复供应商保存、分层连接验证、接入修复、验收与续作门禁及日志计量；评测界面补齐 Pro、参考价格和失败结局登记。见 [发布记录](docs/RELEASE-0.4.1.md)、[27 项验收矩阵](docs/DELEGATION-ACCEPTANCE.md) 与 [评测操作说明](docs/DELEGATION-EXPERIMENTS.md)。真实客户端六场景和付费模型对照尚未执行，不宣称实际节省率。
 
 ## 为什么做 CodexRelay？
 
@@ -29,11 +29,11 @@ Codex 负责规划、判断和验收；DeepSeek 或 OpenAI 兼容模型可以执
 
 ## 下载与安装
 
-**[下载 Windows x64 安装包（v0.4.0 Beta）](https://github.com/Favio8/codexrelay/releases/download/v0.4.0/CodexRelay_0.4.0_x64-setup.exe)**
+**[下载 Windows x64 安装包（v0.4.1 Beta）](https://github.com/Favio8/codexrelay/releases/download/v0.4.1/CodexRelay_0.4.1_x64-setup.exe)**
 
-[Release 说明与 SHA256 校验文件](https://github.com/Favio8/codexrelay/releases/tag/v0.4.0)
+[Release 说明与 SHA256 校验文件](https://github.com/Favio8/codexrelay/releases/tag/v0.4.1)
 
-当前发布版本为 **0.4.0 Beta**。原引擎与 Pi 延续独立预算、checkpoint 和核验后剩余事项续作；新增接入诊断、选择性修复和受控评测。升级后在「设置与诊断」检查接入、预览所需能力与规则变更，应用后重新连接 Codex 验证当前聊天。配置写入不代表客户端已加载全部能力。详见 [发布记录](docs/RELEASE-0.4.0.md)。
+当前发布版本为 **0.4.1 Beta**。原引擎与 Pi 延续独立预算、checkpoint 和核验后剩余事项续作；新增接入诊断、选择性修复和受控评测。升级后在「设置与诊断」检查接入、预览所需能力与规则变更，应用后重新连接 Codex 验证当前聊天。配置写入不代表客户端已加载全部能力。详见 [发布记录](docs/RELEASE-0.4.1.md)。
 
 - 当前优先支持 Windows；已在 Windows 11 x64 验证。界面为简体中文。
 - 需要已有 Codex Desktop；同一 MCP 接入可用于 Codex CLI。
@@ -61,7 +61,7 @@ Codex 负责规划、判断和验收；DeepSeek 或 OpenAI 兼容模型可以执
 | 退出 Codex 或结束它的 MCP 引擎 | 当前执行可能中断；重开后检查部分修改 |
 | 重启电脑后打开 Codex | 自动读取已保存配置；无需重新接入 |
 
-配置写入与 ping 成功分别只证明配置存在、该入口可调用。0.4.0 的接入完整性面板会区分配置推算、客户端报告和实际调用；应用修复后仍需重新连接验证当前聊天的具体能力。快速响应、模型工具协议和执行后端读文件也分别验证、分别计量。已配置却显示同名冲突时，应运行检查，不要反复重新接入或删除其他配置。
+配置写入与 ping 成功分别只证明配置存在、该入口可调用。0.4.1 的接入完整性面板会区分配置推算、客户端报告和实际调用；应用修复后仍需重新连接验证当前聊天的具体能力。快速响应、模型工具协议和执行后端读文件也分别验证、分别计量。已配置却显示同名冲突时，应运行检查，不要反复重新接入或删除其他配置。
 
 ## 主要功能
 
@@ -114,7 +114,7 @@ Key 在 Windows Credential Manager；配置、任务历史和恢复记录默认�
 
 **供应商兼容性如何？**
 
-官方 DeepSeek 有此前版本的实测记录；0.4.0 新功能的本轮验证使用本地模型替身，真实模型验证另列。自定义服务需支持 Chat Completions、工具调用及配置模型所需字段，不同服务的兼容程度可能不同。
+官方 DeepSeek 有此前版本的实测记录；0.4.1 新功能的本轮验证使用本地模型替身，真实模型验证另列。自定义服务需支持 Chat Completions、工具调用及配置模型所需字段，不同服务的兼容程度可能不同。
 
 **停止任务后怎么办？**
 
@@ -132,7 +132,7 @@ npm run desktop:dev
 
 [开发与构建](docs/DEVELOPMENT.md) · [架构](docs/ARCHITECTURE.md) · [测试与已验证范围](docs/TESTING.md) · [贡献指南](CONTRIBUTING.md)
 
-当前公开发布版 **0.4.0 Beta** 提供上述接入、委托和评测工具。[27 项验收矩阵](docs/DELEGATION-ACCEPTANCE.md) 中 19 项本地验证、7 项部分验证，真实六聊天尚未执行。45 试次是未授权的准备材料；净收益仍未知。自动更新与多代理并发不包含在本版本。
+当前公开发布版 **0.4.1 Beta** 提供上述接入、委托和评测工具。[27 项验收矩阵](docs/DELEGATION-ACCEPTANCE.md) 中 19 项本地验证、7 项部分验证，真实六聊天尚未执行。45 试次是未授权的准备材料；净收益仍未知。自动更新与多代理并发不包含在本版本。
 
 ## 致谢与许可
 

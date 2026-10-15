@@ -70,20 +70,43 @@ class Service:
     def save_provider(self, **params):
         provider = validate_provider(params)
         identifier = params.get("id") or uuid.uuid4().hex
-        previous = self.store.provider(identifier) if params.get("id") else None
-        provider.update(id=identifier, revision=uuid.uuid4().hex,
-                        credential_id=previous["credential_id"] if previous else identifier)
         secret = params.get("api_key", "").strip()
-        if secret:
-            provider["credential_id"] = uuid.uuid4().hex
-            self.vault.set(provider["credential_id"], secret)
+        previous, credential_changed, created_credential = None, False, False
         try:
-            self.store.save_provider(provider)
+            # Read and save one current profile under the same writer lock. A
+            # concurrent no-op must never resurrect an old revision or credential.
+            with self.store.connect() as db:
+                db.execute('BEGIN IMMEDIATE')
+                row = db.execute('SELECT payload FROM providers WHERE id=?', (identifier,)).fetchone()
+                if params.get('id') and not row:
+                    raise ValueError('请先配置并选择供应商')
+                previous = json.loads(row[0]) if row else None
+                if previous and params.get('revision') is not None and params['revision'] != previous.get('revision'):
+                    raise ValueError('供应商配置已变化，请重新打开编辑器后保存。')
+                credential_changed = bool(secret) and (not previous or secret != self.vault.get(previous['credential_id']))
+                # Display labels do not change the execution or pricing identity.
+                previous_profile = validate_provider(previous) if previous else None
+                identity_fields = set(provider) | set(previous_profile or {})
+                same_profile = bool(previous) and not credential_changed and all(
+                    provider.get(key) == previous_profile.get(key) for key in identity_fields - {'name', 'kind'})
+                revision = previous.get('revision') if same_profile else None
+                provider.update(id=identifier, revision=revision or uuid.uuid4().hex,
+                                credential_id=previous['credential_id'] if previous else identifier)
+                if same_profile:
+                    provider.update({key: previous[key] for key in ('probe_evidence', 'last_test', 'last_connection_test') if key in previous})
+                if credential_changed:
+                    provider['credential_id'] = uuid.uuid4().hex
+                    self.vault.set(provider['credential_id'], secret)
+                    created_credential = True
+                db.execute('INSERT OR REPLACE INTO providers VALUES (?,?)', (identifier, json.dumps(provider)))
+                current = json.loads(db.execute("SELECT value FROM settings WHERE key='active_provider_id'").fetchone()[0])
+                if not current:
+                    db.execute("UPDATE settings SET value=? WHERE key='active_provider_id'", (json.dumps(identifier),))
         except BaseException:
-            if secret:
+            if created_credential:
                 self.vault.delete(provider["credential_id"])
             raise
-        if secret and previous and previous["credential_id"] != provider["credential_id"]:
+        if credential_changed and previous and previous["credential_id"] != provider["credential_id"]:
             self.vault.delete(previous["credential_id"])
         return {"id": identifier}
 

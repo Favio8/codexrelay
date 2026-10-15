@@ -5,7 +5,7 @@ import path from 'node:path';
 import {spawn,spawnSync} from 'node:child_process';
 import crypto from 'node:crypto';
 const root=process.cwd(),version=JSON.parse(fs.readFileSync('package.json','utf8')).version;
-const baseline=process.env.CODEXRELAY_UPGRADE_FROM||'0.2.2';assert(['0.2.2','0.3.1'].includes(baseline));
+const baseline=process.env.CODEXRELAY_UPGRADE_FROM||'0.2.2';assert(['0.2.2','0.3.1','0.4.0'].includes(baseline));
 const area=fs.mkdtempSync(path.join(root,'.tmp',`upgrade-${baseline}-中文 spaces-`));
 const target=path.join(area,'Local/Programs/CodexRelay'),state=path.join(area,'Local/CodexRelay');
 const env={...process.env,CODEXRELAY_INSTALL_TEST_ROOT:area,CODEXRELAY_HOME:state,CODEX_HOME:path.join(area,'codex')};delete env.OPENAI_API_KEY;delete env.DEEPSEEK_API_KEY;

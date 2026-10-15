@@ -28,6 +28,7 @@ class ConnectionProbeTests(unittest.TestCase):
         self.report_usage = False
         self.cache_write_usage = 0
         self.response_model = None
+        self.tool_id = 'probe'
         self.response_gate = None
         self.request_seen = threading.Event()
         self.disconnected = threading.Event()
@@ -57,8 +58,8 @@ class ConnectionProbeTests(unittest.TestCase):
                             owner.disconnected.set()
                             return
                     return
-                if owner.mode in {'auth', 'rate'}:
-                    self.send_response(401 if owner.mode == 'auth' else 429)
+                if owner.mode in {'auth', 'rate', 'bad-request', 'server-error'}:
+                    self.send_response({'auth': 401, 'rate': 429, 'bad-request': 400, 'server-error': 500}[owner.mode])
                     self.send_header('Content-Type', 'application/json')
                     self.end_headers()
                     self.wfile.write(json.dumps({'error': {'message': 'fixture-secret echoed by provider'}}).encode())
@@ -70,7 +71,7 @@ class ConnectionProbeTests(unittest.TestCase):
                 else:
                     tool = body['tools'][0]['function']['name']
                     message = {'role': 'assistant', 'content': None,
-                               'tool_calls': [{'id': 'probe', 'type': 'function',
+                               'tool_calls': [{'id': owner.tool_id, 'type': 'function',
                                                'function': {'name': tool, 'arguments': json.dumps({'path': 'probe.txt'}) if tool == 'Read' else '{}'}}]}
                 response = {'id': 'fixture', 'object': 'chat.completion', 'created': 1,
                             'model': owner.response_model or body['model'], 'choices': [{'index': 0, 'message': message,
@@ -438,6 +439,110 @@ class ConnectionProbeTests(unittest.TestCase):
         result = self.service.test_provider(self.provider['id'], 'pro', 'quick')
         self.assertIsNone(result['actual_model'])
         self.assertNotIn('fixture-secret', json.dumps(self.service.dispatch('probe_records', {})))
+
+    def test_unchanged_save_name_and_same_key_preserve_verified_identity_and_price(self):
+        from codexrelay.usage import save_price, price_snapshot
+        provider = self.store.provider(self.provider['id'])
+        save_price(self.store, {'input': '2', 'cached_input': '1', 'output': '3'},
+                   provider_id=provider['id'], provider_revision=provider['revision'], model='strong')
+        self.service.test_provider(provider['id'], 'pro', 'full')
+        before = self.store.provider(provider['id'])
+        for changes in ({}, {'name': 'Renamed fixture'}, {'api_key': 'fixture-secret'}):
+            current = self.store.provider(provider['id'])
+            self.service.save_provider(**(current | {'api_key': ''} | changes))
+            current = self.store.provider(provider['id'])
+            self.assertEqual(current['revision'], before['revision'])
+            self.assertEqual(current['probe_evidence'], before['probe_evidence'])
+            self.assertEqual(current['credential_id'], before['credential_id'])
+            with self.store.connect() as db:
+                self.assertIsNotNone(price_snapshot(db, current, 'strong'))
+        self.assertEqual(len(self.requests), 2, 'saving metadata must not require new model calls')
+
+    def test_missing_backend_does_not_block_model_connection_or_tool_protocol(self):
+        limited = [{'id': 'pi', 'installed': False, 'version': 'fixture-unavailable'}]
+        with patch('codexrelay.backends.catalog', return_value=limited):
+            for verification, count in [('quick', 1), ('full', 2)]:
+                before = len(self.requests)
+                result = self.service.test_backend('pi', self.provider['id'], 'pro', verification)
+                self.assertTrue(result['ok']); self.assertFalse(result['backend_verified'])
+                self.assertEqual(len(self.requests) - before, count)
+            before = len(self.requests)
+            with self.assertRaisesRegex(ValueError, '未安装或不可用'):
+                self.service.test_backend('pi', self.provider['id'], 'pro', 'backend')
+            with self.assertRaisesRegex(ValueError, '未知执行后端'):
+                self.service.test_backend('invalid', self.provider['id'], 'pro', 'quick')
+            self.assertEqual(len(self.requests), before)
+
+    def test_safe_errors_distinguish_request_server_and_network_failures(self):
+        for mode, status, expected in [('bad-request', 400, '请求参数'), ('server-error', 500, '服务暂时异常')]:
+            self.mode = mode
+            with self.assertRaisesRegex(ValueError, expected) as error:
+                self.service.test_provider(self.provider['id'], verification='quick')
+            self.assertIn(str(status), str(error.exception))
+            self.assertNotIn('fixture-secret', str(error.exception))
+            record = self.service.dispatch('probe_records', {})[0]
+            self.assertEqual(record['http_status'], status)
+            self.assertEqual(record['error_code'], 'provider_http_error')
+        self.server.shutdown(); self.server.server_close()
+        with self.assertRaisesRegex(ValueError, '无法连接供应商接口'):
+            self.service.test_provider(self.provider['id'], verification='quick')
+        self.assertEqual(self.service.dispatch('probe_records', {})[0]['error_code'], 'connection_unreachable')
+
+    def test_explicit_zero_cache_write_tariff_determines_cost_without_inventing_usage(self):
+        from decimal import Decimal
+        from codexrelay.usage import save_price
+        provider = self.store.provider(self.provider['id'])
+        save_price(self.store, {'input': '2', 'cached_input': '1', 'output': '3', 'cache_write': '0'},
+                   provider_id=provider['id'], provider_revision=provider['revision'], model='strong')
+        self.report_usage = True; self.cache_write_usage = None
+        result = self.service.test_provider(provider['id'], 'pro', 'quick')
+        self.assertIsNone(result['usage_events'][0]['cache_write_input'])
+        usage = self.service.dispatch('probe_usage_today', {})
+        self.assertEqual(usage['unknown_cache_write'], 1)
+        self.assertEqual(usage['cache_write_zero_rate'], 1)
+        self.assertEqual(Decimal(usage['cost']['low']), Decimal('0.000045'))
+        self.assertTrue(usage['cost_complete'])
+
+    def test_adversarial_stale_noop_save_cannot_restore_revision_or_deleted_credential(self):
+        before = self.store.provider(self.provider['id'])
+        self.service.save_provider(**(before | {'flash_model': 'replacement', 'api_key': 'rotated-fixture-key'}))
+        current = self.store.provider(before['id'])
+        with self.assertRaisesRegex(ValueError, '配置已变化'):
+            self.service.save_provider(**(before | {'api_key': ''}))
+        after = self.store.provider(before['id'])
+        self.assertEqual(after['revision'], current['revision'])
+        self.assertEqual(after['flash_model'], 'replacement')
+        self.assertEqual(self.service.vault.get(after['credential_id']), 'rotated-fixture-key')
+        self.assertNotEqual(after['revision'], before['revision'])
+
+    def test_adversarial_concurrent_provider_changes_have_one_atomic_winner(self):
+        before = self.store.provider(self.provider['id'])
+        start, results, errors = threading.Barrier(2), [], []
+        def save(model):
+            start.wait(5)
+            try:
+                self.service.save_provider(**(before | {'flash_model': model, 'api_key': model + '-fixture-key'}))
+                results.append(model)
+            except Exception as error:
+                errors.append(str(error))
+        threads = [threading.Thread(target=save, args=(model,)) for model in ('winner-a', 'winner-b')]
+        for thread in threads: thread.start()
+        for thread in threads: thread.join(10)
+        self.assertTrue(all(not thread.is_alive() for thread in threads))
+        self.assertEqual(len(results), 1); self.assertEqual(len(errors), 1)
+        self.assertIn('配置已变化', errors[0])
+        after = self.store.provider(before['id'])
+        self.assertEqual(after['flash_model'], results[0])
+        self.assertEqual(self.service.vault.get(after['credential_id']), results[0] + '-fixture-key')
+
+    def test_adversarial_backend_tool_identifier_cannot_echo_credentials(self):
+        self.tool_id = 'fixture-secret'
+        result = self.service.test_backend('deepseek', self.provider['id'], 'pro', 'backend')
+        self.assertTrue(result['backend_verified'])
+        self.assertEqual(len(self.requests), 2)
+        self.assertNotIn('fixture-secret', json.dumps(result))
+        self.assertNotIn('fixture-secret', json.dumps(self.service.dispatch('probe_records', {})))
+        self.assertNotIn('fixture-secret', json.dumps(self.service.snapshot()))
 
 
 if __name__ == '__main__':

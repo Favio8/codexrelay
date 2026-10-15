@@ -47,20 +47,67 @@ try{
  await expect(panel.getByRole('alert')).toContainText('没有自动重放');
  assert.equal(calls.filter(c=>c.method==='evaluation'&&c.params.action==='create_experiment').length,1);
  await panel.getByRole('textbox',{name:'主模型',exact:true}).fill('fixture-codex');
+ await panel.getByRole('textbox',{name:'主模型供应商',exact:true}).fill('fixture-host-provider');
  await panel.getByRole('textbox',{name:'隔离工作区根目录',exact:true}).fill(path.join(area,'workspaces'));
+ await panel.getByRole('combobox',{name:'外部模型档位',exact:true}).selectOption('pro');
+ await panel.locator('summary').filter({hasText:'冻结设置与参考价格'}).click();
+ await panel.getByRole('combobox',{name:'主模型计费方式',exact:true}).selectOption('subscription');
+ await panel.getByRole('combobox',{name:'外部模型计费方式',exact:true}).selectOption('api');
+ for(const label of ['主模型','外部模型']){
+  await panel.getByRole('checkbox',{name:`填写${label}参考价格`,exact:true}).check();
+  await panel.getByRole('textbox',{name:`${label}输入单价`,exact:true}).fill('1.2');
+  await panel.getByRole('textbox',{name:`${label}输出单价`,exact:true}).fill('3.4');
+  await panel.getByRole('textbox',{name:`${label}价格来源`,exact:true}).fill('isolated fixture; no real price claim');
+  await panel.getByLabel(`${label}价格核对时间`,{exact:true}).fill('2026-10-15T12:00');
+ }
  await panel.getByRole('button',{name:'创建草稿',exact:true}).click();
  await expect(panel.getByLabel('评测结果')).toContainText('"state": "draft"');
  const experimentId=await panel.getByRole('textbox',{name:'实验 ID',exact:true}).inputValue();assert.match(experimentId,/^[a-f0-9]{32}$/);
  await panel.getByRole('button',{name:'冻结并准备隔离材料',exact:true}).click();
  await expect(panel.getByLabel('评测结果')).toContainText('"state": "prepared"');
  await expect(panel.getByLabel('评测结果')).toContainText('"authorization": null');
- const summary=panel.locator('details').first().locator('summary');await summary.focus();await page.keyboard.press('Enter');
- await expect(panel.locator('details').first()).toHaveAttribute('open','');
+ const authorization=panel.locator('details').filter({has:page.locator('summary').filter({hasText:'累计授权预览'})});
+ await authorization.locator('summary').focus();await page.keyboard.press('Enter');
+ await expect(authorization).toHaveAttribute('open','');
  await panel.getByRole('button',{name:'生成具体授权预览',exact:true}).click();
  await expect(panel.getByRole('button',{name:'确认上述范围并授权',exact:true})).toBeVisible();
  assert.equal(calls.filter(c=>c.method==='evaluation'&&c.params.action==='authorize').length,0);
  let actual=await rpc('evaluation',{action:'describe',params:{experiment_id:experimentId}});
  assert(actual.ok,JSON.stringify(actual));assert.equal(actual.data.authorization,null);assert.equal(actual.data.trials.length,15);
+ assert.equal(actual.data.conditions.external_slot,'pro');assert.equal(actual.data.conditions.external_model,'fixture-pro');
+ assert.equal(actual.data.conditions.main_billing,'subscription');assert.equal(actual.data.conditions.external_billing,'api');
+ for(const price of [actual.data.conditions.main_price,actual.data.conditions.external_price]){
+  assert.equal(price.input,'1.2');assert.equal(price.output,'3.4');assert.equal(price.cached_input,null);assert.equal(price.cache_write,null);
+  assert.equal(price.source,'isolated fixture; no real price claim');assert.match(price.sha256,/^[a-f0-9]{64}$/);
+ }
+ await panel.locator('summary').filter({hasText:'真实聊天操作与独立评分'}).click();
+ const selected=actual.data.trials.filter(t=>t.group==='B').slice(0,3);
+ await panel.getByRole('combobox',{name:'试次',exact:true}).selectOption(selected[0].id);
+ let describes=calls.filter(c=>c.method==='evaluation'&&c.params.action==='describe').length;
+ await panel.getByRole('button',{name:'登记开始',exact:true}).click();
+ await expect(panel.getByRole('alert')).toHaveText('EXPERIMENT_NOT_AUTHORIZED');
+ assert.equal(calls.filter(c=>c.method==='evaluation'&&c.params.action==='describe').length,describes,'failed mutation must not refresh away its error');
+ // This grant is confined to the fixture database. Zero external tokens means no model requests.
+ await panel.getByRole('spinbutton',{name:'最多试次',exact:true}).fill('3');
+ await panel.getByRole('spinbutton',{name:'主模型已观测 Token',exact:true}).fill('1000');
+ await panel.getByRole('button',{name:'生成具体授权预览',exact:true}).click();
+ await panel.getByRole('button',{name:'确认上述范围并授权',exact:true}).click();
+ await expect(panel.getByLabel('评测结果')).toContainText('"state": "authorized"');
+ const endings=['not_delegated','failed','completed_by_parent'];
+ for(let i=0;i<selected.length;i++){
+  await panel.getByRole('combobox',{name:'试次',exact:true}).selectOption(selected[i].id);
+  await panel.getByRole('button',{name:'登记开始',exact:true}).click();
+  await expect(panel.getByLabel('评测结果')).toContainText('"state": "running"');
+  await expect(panel.getByRole('button',{name:'登记开始',exact:true})).toBeEnabled();
+  await panel.getByRole('combobox',{name:'实际执行结局',exact:true}).selectOption(endings[i]);
+  if(i===0)await panel.getByRole('combobox',{name:'未派工原因',exact:true}).selectOption('disabled');
+  await panel.getByRole('button',{name:'登记执行结束',exact:true}).click();
+  await expect(panel.getByLabel('评测结果')).toContainText(`"outcome": "${endings[i]}"`);
+  await expect(panel.getByRole('button',{name:'登记执行结束',exact:true})).toBeEnabled();
+ }
+ actual=await rpc('evaluation',{action:'describe',params:{experiment_id:experimentId}});
+ for(let i=0;i<selected.length;i++)assert.equal(actual.data.trials.find(t=>t.id===selected[i].id).outcome,endings[i]);
+ assert.equal(actual.data.trials.find(t=>t.id===selected[0].id).not_delegated_reason,'disabled');
  for(const [width,height] of [[900,600],[800,520]]){
   await page.setViewportSize({width,height});
   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`evaluation overflow ${width}x${height}`);
@@ -70,7 +117,7 @@ try{
  await expect(panel.getByLabel('评测结果')).toContainText('"report_version": 1');
  await expect(panel.getByLabel('评测结果')).toContainText('"requests": 0');
  assert.equal(modelRequests,0);assert.deepEqual(errors,[]);
- const result={ok:true,evidence_kind:'browser_and_actual_python_rpc',area,modelRequests,paidRequests:0,checks:['busy mutation error has no auto replay','create draft','freeze 15 isolated trial files','preview does not authorize','prepare/preview/report send no model request','900x600 and 800x520 layout','keyboard disclosure','counter-only report','no JavaScript errors']};
- const evidence=path.join(root,'artifacts','evidence','0.4.0','evaluation-ui.json');fs.mkdirSync(path.dirname(evidence),{recursive:true});fs.writeFileSync(evidence,JSON.stringify(result,null,2));
+ const result={ok:true,evidence_kind:'browser_and_actual_python_rpc',area,modelRequests,paidRequests:0,checks:['busy mutation error has no auto replay','Pro model and sourced API prices frozen through UI/RPC','subscription and API billing distinct','unknown cache prices retained','freeze 15 isolated trial files','preview does not authorize','failed start error remains visible','fixture-only explicit token-zero grant','not delegated/failed/parent takeover outcomes','prepare/preview/report send no model request','900x600 and 800x520 layout','keyboard disclosure','counter-only report','no JavaScript errors']};
+ const evidence=path.join(root,'artifacts','evidence','implementation-review','evaluation-ui.json');fs.mkdirSync(path.dirname(evidence),{recursive:true});fs.writeFileSync(evidence,JSON.stringify(result,null,2));
  console.log(JSON.stringify(result));
 }finally{if(browser)await browser.close();await new Promise(r=>web.close(r));await new Promise(r=>model.close(r));}

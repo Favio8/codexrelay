@@ -1,6 +1,6 @@
 [project]
 name = "codexrelay"
-version = "0.4.0"
+version = "0.4.1"
 description = "Local control plane for Codex external subagents"
 requires-python = ">=3.12,<3.13"
 dependencies = ["mcp>=1.28,<2", "openai>=1.40,<3", "tomlkit>=0.13,<1"]

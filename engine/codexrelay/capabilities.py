@@ -76,7 +76,8 @@ def scope_tools(scope):
     if scope == "full":
         return list(CANONICAL_TOOLS)
     if scope == "basic":
-        return ["ping", "start_agent_readonly", "get_task_status", "get_task_result", "cancel_task"]
+        return ["ping", "start_agent_readonly", "get_task_status", "get_task_result", "cancel_task",
+                "bind_client_session", "get_client_evidence"]
     raise ValueError("capability_scope must be basic or full")
 
 
