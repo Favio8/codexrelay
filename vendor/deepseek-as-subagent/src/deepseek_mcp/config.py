@@ -421,6 +421,9 @@ class Config:
     execution_options: dict = field(default_factory=dict)
     budget_source: str = 'provider_default'
     context_window: int | None = None
+    # Host-owned authorization callback; never included in provider/Node payloads.
+    request_guard: object | None = field(default=None, repr=False, compare=False)
+    request_kind: str = 'execution'
 
     def __post_init__(self) -> None:
         if is_unsafe_workspace_root(self.workspace):

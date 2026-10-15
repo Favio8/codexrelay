@@ -284,11 +284,11 @@ def _provider_request(state, turn, *, messages=None, tools=None, output_cap=None
     tools = state.tools if tools is None else tools
     size = request_size(state, messages, tools)
     cap = output_cap or state.config.max_output_tokens
-    request_profile = state.config
+    request_profile = replace(state.config, request_kind=request_kind)
     # A structured index does not require a long reasoning trace. Use the same model
     # in its documented ordinary mode on the known endpoint; execution stays frozen.
     if request_kind == 'summary' and is_deepseek_endpoint(state.config.base_url):
-        request_profile = replace(state.config, reasoning_effort='none')
+        request_profile = replace(request_profile, reasoning_effort='none')
     def before(config):
         _check_cancel(state.controls.cancel)
         _remaining_seconds(state.deadline)

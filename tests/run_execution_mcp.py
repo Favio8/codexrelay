@@ -80,10 +80,17 @@ async def run():
                     for item in status['checks']:
                         reply = await call('acknowledge_workspace_review', review_id=item['review_id'], state_sha256=item['state_sha256'], evidence='Parent independently read artifacts and verified exact current state')
                         assert reply['ok'], reply
-                group = await call('create_task_group', goal='PHASE_ONE then PHASE_TWO', task_kind='implementation', capability='coding', write_paths=['partial.txt', 'remaining.txt'], constraints='Preserve first artifact; write only remaining work on continuation', acceptance='Both artifacts have exact expected text')
+                ping = await call('ping')
+                listing = await client.list_tools()
+                assert {t.name for t in listing.tools} == {t['name'] for t in ping['server_capabilities']['tools']}
+                binding = await call('bind_client_session', session_id='fixture-'+backend, root_session_id='fixture-root-'+backend,
+                                     client_kind='local_stdio', confirmed=True, client_version='deterministic-fixture')
+                group = await call('create_task_group', goal='PHASE_ONE then PHASE_TWO', task_kind='implementation', capability='coding', write_paths=['partial.txt', 'remaining.txt'], constraints='Preserve first artifact; write only remaining work on continuation', acceptance='Both artifacts have exact expected text',client_binding_id=binding['id'])
                 job = await call('start_agent', task='PHASE_ONE', group_id=group['group_id'])
                 task = await finished(job); assert task['status'] == 'budget_stopped', task
                 cp = await call('get_task_checkpoint', checkpoint_id=task['checkpoint']['checkpoint_id'])
+                assert cp['environment']['client_binding_id'] == binding['id']
+                assert cp['environment']['mcp_instance'] == ping['instance']
                 assert cp['mutations'] and cp['files']; assert task['verification']['status'] == 'pending'
                 verification = await call('record_task_verification', job_id=task['id'], passed=True, evidence='Read partial.txt and verified exact contents', disposition='verified_partial', checkpoint_id=cp['checkpoint_id'], checkpoint_sha256=cp['sha256'], completed_items=['PHASE_ONE'], remaining_items=['PHASE_TWO'])
                 assert verification['ok'], verification
@@ -106,6 +113,9 @@ async def run():
                 chain = await call('get_task_group', group_id=group['group_id'])
                 assert chain['status'] == 'completed' and chain['used_continuations'] == 1
                 assert chain['usage_summary']['reported_tokens'] == 32860, chain
+                observed = await call('get_client_evidence',group_id=group['group_id'])
+                assert any(r['tool']=='resume_agent' and r['success'] for r in observed['calls']), observed
+                assert {r['client_binding_id'] for r in observed['calls'] if 'client_binding_id' in r} == {binding['id']}
                 reports.append(dict(backend=backend, protocol='thinking', ok=True, group_id=group['group_id'],
                                     fixture=str(area), rounds=2, usage=chain['usage_summary'], checks=['budget checkpoint', 'journal/workspace gate', 'switch gate', 'partial verification', 'remaining-only continuation', 'idempotency', 'parent completion']))
             reopened = Store(area / 'state'); assert reopened.task(next_task['id'])['status'] == 'completed'

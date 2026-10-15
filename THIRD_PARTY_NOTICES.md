@@ -11,3 +11,5 @@ CodexRelay's own code is MIT licensed. Dependencies retain their own licenses.
 - **Node.js**: the pinned Windows x64 distribution and SHA-256 are recorded in `vendor/pi-agent/node-distribution.json`. Its original LICENSE and the SDK bundle's component notices ship under `runtime/pi/` alongside a file-hash manifest.
 
 The generated release notices describe the particular installer, including dependency versions. Development-only dependencies are not claimed to be runtime components.
+
+Reviewed supplements, exact upstream revisions and document hashes are in [vendor/licenses](vendor/licenses/README.md). The release includes the matching Microsoft WebView2 SDK license/notice and unchanged Source Code Form archives for the resolved MPL components under `runtime/third-party-sources/`. Notice generation rejects unreviewed missing text or changed source artifacts.

@@ -34,4 +34,6 @@ jobs:
           python-version: '3.12'
       - run: python -m pip install --require-hashes -r vendor/deepseek-as-subagent/requirements.lock
       - run: python -m pip install --no-deps --no-build-isolation ./vendor/deepseek-as-subagent ./engine
+      - name: Verify installed evaluation resources outside source imports
+        run: python -I -B -c "import json; from importlib.resources import files; from codexrelay import __version__; cases=json.loads(files('codexrelay').joinpath('evaluation_fixtures/cases.json').read_text(encoding='utf-8'))['cases']; assert __version__ == '0.4.0'; assert len(cases) == 5; assert {c['kind'] for c in cases} == {'implementation','testing','review','analysis','documentation'}"
       - run: python -X utf8 -m unittest discover -s tests -v

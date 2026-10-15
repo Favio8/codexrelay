@@ -61,10 +61,11 @@ class ControlTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "已有委托任务执行中"):
             self.service.dispatch("test_backend", {"backend": "deepseek", "provider_id": self.provider["id"]})
         self.store.update_task(self.store.snapshot()["tasks"][0]["id"], status="cancelled", finished_at=time.time())
-        with patch("codexrelay.backends.DeepSeekJobManager.run_sync", side_effect=RuntimeError("no provider")) as runner:
+        from codexrelay.connection_probe import ProbeFailure
+        with patch("codexrelay.connection_probe.probe_backend", side_effect=ProbeFailure("no provider")) as runner:
             with self.assertRaisesRegex(ValueError, "no provider"):
                 self.service.dispatch("test_backend", {"backend": "deepseek", "provider_id": self.provider["id"]})
-        self.assertEqual(runner.call_args.args[1].max_total_tokens, 32768)
+        self.assertEqual(runner.call_args.args[2:4], ('flash', 'deepseek'))
 
     def test_readonly_without_read_tools_is_refused_before_any_call(self):
         self.enable()
@@ -80,15 +81,16 @@ class ControlTests(unittest.TestCase):
     def test_backend_probe_reserves_the_shared_slot_and_releases_after_failure(self):
         self.enable()
         other = Store(self.store.directory)
-        def probe(*args):
+        def probe(*args, **kwargs):
             with self.assertRaisesRegex(ValueError, 'BUSY'):
                 other.admit('Concurrent task', self.workspace, 'readonly', 'flash')
             with self.assertRaisesRegex(ValueError, '已有委托任务执行中'):
                 with other.backend_probe(other.provider(self.provider['id']), 'pi', 'flash', self.workspace):
                     self.fail('a second probe entered')
             self.assertEqual(self.service.dispatch('usage_today', {})['counts'], {})
-            raise RuntimeError('fixture probe failed')
-        with patch('codexrelay.backends.DeepSeekJobManager.run_sync', side_effect=probe):
+            from codexrelay.connection_probe import ProbeFailure
+            raise ProbeFailure('fixture probe failed')
+        with patch('codexrelay.connection_probe.probe_backend', side_effect=probe):
             with self.assertRaisesRegex(ValueError, 'fixture probe failed'):
                 self.service.test_backend('deepseek', self.provider['id'])
         self.assertEqual(other.snapshot()['tasks'], [])

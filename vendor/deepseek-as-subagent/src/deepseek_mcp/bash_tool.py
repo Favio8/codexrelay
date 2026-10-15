@@ -6,6 +6,7 @@ import signal
 import subprocess
 import threading
 import tempfile
+import time
 from contextlib import nullcontext
 import ctypes
 from ctypes import wintypes
@@ -22,6 +23,7 @@ MAX_BASH_TIMEOUT = 600
 DEFAULT_BASH_TIMEOUT = 60
 MAX_STREAM_BYTES = 25_000
 PROCESS_STOP_SECONDS = 5
+WINDOWS_JOB_STOP_SECONDS = 1.0
 _HOST_ENVIRONMENT = (
     "PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC", "TEMP", "TMP",
 )
@@ -63,18 +65,56 @@ class _WindowsExtendedLimits(ctypes.Structure):
     ]
 
 
+class _WindowsBasicAccounting(ctypes.Structure):
+    _fields_ = [
+        ("total_user_time", ctypes.c_longlong),
+        ("total_kernel_time", ctypes.c_longlong),
+        ("this_period_user_time", ctypes.c_longlong),
+        ("this_period_kernel_time", ctypes.c_longlong),
+        ("total_page_fault_count", wintypes.DWORD),
+        ("total_processes", wintypes.DWORD),
+        ("active_processes", wintypes.DWORD),
+        ("total_terminated_processes", wintypes.DWORD),
+    ]
+
+
 @dataclass
 class _WindowsJob:
     """Own a Windows process job until every host descendant must be gone."""
 
     handle: int
     close_handle: object
+    terminate_job: object
+    active_processes: object
+    _closed_ok: bool = True
 
     def close(self) -> bool:
         if not self.handle:
-            return True
+            return self._closed_ok
         handle, self.handle = self.handle, 0
-        return bool(self.close_handle(handle))
+        # KILL_ON_JOB_CLOSE initiates termination asynchronously. Keep the job
+        # handle until accounting confirms all descendants have exited, so a
+        # terminal task cannot race a still-open command cwd/private home.
+        self._closed_ok = False
+        exited = False
+        deadline = time.monotonic() + WINDOWS_JOB_STOP_SECONDS
+        try:
+            if not self.terminate_job(handle, 1):
+                return False
+            while True:
+                active = self.active_processes(handle)
+                if active is None:
+                    return False
+                if active == 0:
+                    exited = True
+                    break
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                time.sleep(min(.01, remaining))
+        finally:
+            self._closed_ok = bool(self.close_handle(handle)) and exited
+        return self._closed_ok
 
 
 @dataclass
@@ -231,6 +271,17 @@ def _create_windows_job(process: subprocess.Popen[bytes]) -> _WindowsJob | None:
     close = kernel.CloseHandle
     close.argtypes = (wintypes.HANDLE,)
     close.restype = wintypes.BOOL
+    terminate = kernel.TerminateJobObject
+    terminate.argtypes = (wintypes.HANDLE, wintypes.UINT)
+    terminate.restype = wintypes.BOOL
+    query = kernel.QueryInformationJobObject
+    query.argtypes = (wintypes.HANDLE, wintypes.INT, ctypes.c_void_p, wintypes.DWORD, ctypes.c_void_p)
+    query.restype = wintypes.BOOL
+    def active_processes(job_handle):
+        accounting = _WindowsBasicAccounting()
+        if not query(job_handle, 1, ctypes.byref(accounting), ctypes.sizeof(accounting), None):
+            return None
+        return accounting.active_processes
     handle = create(None, None)
     if not handle:
         raise OSError(ctypes.get_last_error(), "CreateJobObjectW failed")
@@ -244,7 +295,7 @@ def _create_windows_job(process: subprocess.Popen[bytes]) -> _WindowsJob | None:
     except BaseException:
         close(handle)
         raise
-    return _WindowsJob(handle, close)
+    return _WindowsJob(handle, close, terminate, active_processes)
 
 
 def _start_host_command(

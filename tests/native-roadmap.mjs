@@ -11,12 +11,13 @@ const version=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'))
 const staging=path.join(area,'app');fs.mkdirSync(staging);
 fs.copyFileSync(path.join(root,'src-tauri/target/release/codexrelay.exe'),path.join(staging,'codexrelay.exe'));
 fs.symlinkSync(path.join(root,'runtime'),path.join(staging,'runtime'),'junction');
-let requests=0;
+let requests=0;const requestBodies=[],probeMatrix=[];
 const server=http.createServer(async(req,res)=>{
  let input='';for await(const data of req)input+=data;
- const body=JSON.parse(input);requests++;
+ const body=JSON.parse(input);requests++;requestBodies.push(body);
  const tool=body.messages.filter(m=>m.role==='tool').at(-1);
- const message=tool?{role:'assistant',content:tool.content}:{role:'assistant',content:null,tool_calls:[{id:'probe',type:'function',function:{name:'Read',arguments:JSON.stringify({path:'probe.txt'})}}]};
+ const probeTool=body.tools?.find(t=>t.function.name==='relay_probe')?.function.name||'Read';
+ const message=tool?{role:'assistant',content:tool.content}:!body.tools?{role:'assistant',content:'CONNECTED'}:{role:'assistant',content:null,tool_calls:[{id:'probe',type:'function',function:{name:probeTool,arguments:JSON.stringify(probeTool==='Read'?{path:'probe.txt'}:{})}}]};
  res.setHeader('Content-Type','application/json');res.end(JSON.stringify({id:'native-probe',object:'chat.completion',created:1,model:body.model,choices:[{index:0,message,finish_reason:tool?'stop':'tool_calls'}],usage:{prompt_tokens:100,completion_tokens:10,prompt_tokens_details:{cached_tokens:20}}}));
 });
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
@@ -24,7 +25,7 @@ const env={...process.env,CODEXRELAY_HOME:path.join(area,'state'),CODEX_HOME:pat
 delete env.DEEPSEEK_API_KEY;delete env.OPENAI_API_KEY;
 env.PATH=path.join(process.env.SystemRoot,'System32')+';'+process.env.SystemRoot;
 const python=path.join(root,'runtime','python.exe');
-const setup=`from codexrelay.service import Service\nfrom codexrelay.integration import install,codex_dir,BEGIN,END\ns=Service()\ns.save_provider(name='Native fixture',kind='custom',base_url='http://127.0.0.1:${server.address().port}/v1',flash_model='fixture',pro_model='fixture')\ninstall(s.store)\np=codex_dir()/'AGENTS.md'\np.write_text('User rule: preserve me.\\n'+BEGIN+'\\nLegacy managed rules\\n'+END+'\\n',encoding='utf-8')\n`;
+const setup=`from codexrelay.service import Service\nfrom codexrelay.integration import install,codex_dir,BEGIN,END\ns=Service()\ns.save_provider(name='Native fixture',kind='custom',base_url='http://127.0.0.1:${server.address().port}/v1',flash_model='fixture',pro_model='fixture-pro')\ninstall(s.store)\np=codex_dir()/'AGENTS.md'\np.write_text('User rule: preserve me.\\n'+BEGIN+'\\nLegacy managed rules\\n'+END+'\\n',encoding='utf-8')\n`;
 const initialized=spawnSync(python,['-I','-B','-X','utf8','-c',setup],{env,encoding:'utf8',windowsHide:true});assert.equal(initialized.status,0,initialized.stderr);
 const logs=path.join(env.CODEX_HOME,'sessions','2020','01','01');fs.mkdirSync(logs,{recursive:true});
 const sentinel='DO_NOT_CACHE_NATIVE_LOG_BODY';
@@ -83,10 +84,26 @@ try{
  await page.getByRole('button',{name:'保存执行默认设置',exact:true}).click();
  await page.getByText('执行默认设置已保存，仅影响新任务。',{exact:true}).waitFor();
  assert.equal((await rpc('snapshot')).data.execution_defaults.max_auto_continuations,2);
- await page.getByRole('button',{name:'测试连接',exact:true}).click();
- await page.locator('.alert.success,.alert.error').filter({hasText:/连接测试通过|失败|操作|runtime|workspace/}).first().waitFor({timeout:45000});
- assert((await page.locator('body').innerText()).includes('连接测试通过。'),await page.locator('body').innerText());
+ await page.getByRole('button',{name:'执行后端验证',exact:true}).click();
+ await page.locator('.toast.success,.backend-settings .alert.error').filter({hasText:/此模型与执行后端验证通过|失败|操作|runtime|workspace/}).first().waitFor({timeout:45000});
+ assert((await page.locator('body').innerText()).includes('此模型与执行后端验证通过。'),await page.locator('body').innerText());
  assert.equal(requests,2);
+ const provider=(await rpc('snapshot')).data.providers[0];
+ for(const method of ['test_provider','test_backend'])for(const slot of ['flash','pro'])for(const verification of ['quick','full']){
+  const prior=requests;
+  const params={slot,verification,...(method==='test_provider'?{id:provider.id}:{backend:'pi',provider_id:provider.id})};
+  const reply=await rpc(method,params);assert(reply.ok,JSON.stringify(reply));
+  const expectedModel=slot==='flash'?'fixture':'fixture-pro';
+  assert.equal(reply.data.model,expectedModel);assert.equal(reply.data.verification,verification);
+  assert.equal(requests-prior,verification==='quick'?1:2);
+  assert(requestBodies.slice(prior).every(body=>body.model===expectedModel));
+  assert.equal(reply.data.backend_verified,false);
+  probeMatrix.push({method,slot,verification,requests:requests-prior,model:expectedModel});
+ }
+ const proBackend=await rpc('test_backend',{backend:'pi',provider_id:provider.id,slot:'pro',verification:'backend'});
+ assert(proBackend.ok&&proBackend.data.backend_verified,JSON.stringify(proBackend));
+ assert.equal(proBackend.data.model,'fixture-pro');
+ probeMatrix.push({method:'test_backend',slot:'pro',verification:'backend',requests:proBackend.data.request_count,model:proBackend.data.model});
  // Seed a real Pi Read run in this isolated state; the host process stays independent of GUI lifetime.
  const workspace=path.join(area,'execution workspace');fs.mkdirSync(workspace);fs.writeFileSync(path.join(workspace,'probe.txt'),'NATIVE_EXECUTION_EVIDENCE');
  const seed=`import time\nfrom pathlib import Path\nfrom codexrelay.service import Service\nfrom codexrelay.mcp_server import Relay\ns=Service();s.store.set_setting('enabled',True)\nr=Relay(s.store,s.vault,Path(${JSON.stringify(workspace)}));j=r.start('Read probe.txt for native task-group verification','','readonly','flash',task_kind='analysis')\nwhile s.store.task(j['job_id'])['status'] in {'queued','running','compacting','wrapping_up','cancelling'}: time.sleep(.05)\ns.store.set_setting('enabled',False)\nprint(j['job_id'])\n`;
@@ -140,7 +157,7 @@ try{
  await page.getByRole('heading',{name:'执行后端',exact:true}).scrollIntoViewIfNeeded();
  const output=path.join(root,'artifacts','evidence');fs.mkdirSync(output,{recursive:true});
  await page.screenshot({path:path.join(output,version+'-native-settings.png')});
- const result={ok:true,target:'actual Tauri/WebView2 and bundled Python/Pi',requests,checks:['atomic backend/provider activation preserves disabled switch','Pi real local model+Read loop from GUI','new execution defaults through UI','real Pi task group displayed with pending verification and on-demand checkpoint','native App grant and budget buttons with real Windows confirmation dialogs','App RPC grant idempotency and frozen current budget without model launch','opt-in Codex log import from old session directory','per-model cached-input prices','no message body in DB or DOM','stop scanning and clear cache without deleting logs','managed-rule upgrade preserves user rules','900x600 layout'],uncovered:[],fixture:area};
+ const result={ok:true,target:'actual Tauri/WebView2 and bundled Python/Pi',requests,probeMatrix,checks:['atomic backend/provider activation preserves disabled switch','Pi real local model+Read loop from GUI','new execution defaults through UI','real Pi task group displayed with pending verification and on-demand checkpoint','native App grant and budget buttons with real Windows confirmation dialogs','App RPC grant idempotency and frozen current budget without model launch','opt-in Codex log import from old session directory','per-model cached-input prices','no message body in DB or DOM','stop scanning and clear cache without deleting logs','managed-rule upgrade preserves user rules','900x600 layout'],uncovered:[],fixture:area};
  fs.writeFileSync(path.join(output,version+'-native.json'),JSON.stringify(result,null,2));console.log(JSON.stringify(result,null,2));
 }catch(error){
  if(page)console.error('Native failure state:',await page.locator('body').innerText());

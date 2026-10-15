@@ -60,7 +60,7 @@ npm run build
 用户确认后，于2026-10-13完成本机安装更新：
 
 - 使用项目现有便携MSVC工具链执行scripts/build.ps1，TypeScript、Vite、Rust release与NSIS安装包构建均退出0。安装包为src-tauri/target/release/bundle/nsis/CodexRelay_0.1.4_x64-setup.exe。
-- scripts/update-installed.ps1退出0，将19个变更文件写入C:\Users\19949\AppData\Local\Programs\CodexRelay；替换前确认无活动任务，并备份旧文件。管理窗口已重新启动，进程对应安装目录，文件版本与注册版本均为0.1.4。
+- scripts/update-installed.ps1退出0，将19个变更文件写入%LOCALAPPDATA%\Programs\CodexRelay；替换前确认无活动任务，并备份旧文件。管理窗口已重新启动，进程对应安装目录，文件版本与注册版本均为0.1.4。
 - 独立核对安装程序及codexrelay/deepseek_mcp全部60个Python文件：与新构建源码哈希一致。安装包SHA-256为37aefa75f5d8f30386bef207071449a98f3e6a2af195491982248902a3eb7d5d。
 - 使用安装后的Python启动真实stdio MCP进程，隔离状态目录与工作区，仅执行工具枚举和ping：返回0.1.4，12个工具齐全，新增复验接口与四个委托工具的作用域/预算参数存在。没有提交委托、没有模型请求；该检查不是新的自动派工验收。
 - 更新前后settings、providers、projects表的内容哈希一致；总开关仍为关闭。Codex的config.toml与AGENTS.md哈希一致，接入仍被识别。当前会话既有MCP进程没有被终止；重启Codex后加载更新。

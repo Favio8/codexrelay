@@ -5,15 +5,15 @@
 
 **让 Codex 调用 DeepSeek，把子代理交给一个开关管理。**
 
-[![Release](https://img.shields.io/github/v/release/Favio8/codexrelay?include_prereleases&color=33795a)](https://github.com/Favio8/codexrelay/releases/tag/v0.3.1)
-[![Windows](https://img.shields.io/badge/Windows-x64-0078D4)](https://github.com/Favio8/codexrelay/releases/tag/v0.3.1)
+[![Release](https://img.shields.io/github/v/release/Favio8/codexrelay?include_prereleases&color=33795a)](https://github.com/Favio8/codexrelay/releases/tag/v0.4.0)
+[![Windows](https://img.shields.io/badge/Windows-x64-0078D4)](https://github.com/Favio8/codexrelay/releases/tag/v0.4.0)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![CI](https://github.com/Favio8/codexrelay/actions/workflows/ci.yml/badge.svg)](https://github.com/Favio8/codexrelay/actions/workflows/ci.yml)
 
-简体中文 · [English](README_EN.md) · [下载安装](https://github.com/Favio8/codexrelay/releases/tag/v0.3.1) · [反馈问题](https://github.com/Favio8/codexrelay/issues)
+简体中文 · [English](README_EN.md) · [下载安装](https://github.com/Favio8/codexrelay/releases/tag/v0.4.0) · [反馈问题](https://github.com/Favio8/codexrelay/issues)
 </div>
 
-**0.3.1 Windows Beta** 已加入核验后续作、持久化 checkpoint 和 App 单任务授权，并修复大单行文件在低预算下读取过多的问题。见 [使用说明](docs/EXECUTION-OPTIMIZATION.md)、[发布记录](docs/RELEASE-0.3.1.md) 与 [逐项验收](docs/EXECUTION-ACCEPTANCE.md)。
+**0.4.0 Windows Beta** 增加接入完整性与选择性修复预览、Flash/Pro 三层连接验证、客户端与试次证据关联，以及冻结案例和受控收益评测。见 [发布记录](docs/RELEASE-0.4.0.md)、[27 项验收矩阵](docs/DELEGATION-ACCEPTANCE.md) 与 [评测操作说明](docs/DELEGATION-EXPERIMENTS.md)。真实客户端六场景和付费模型对照尚未执行，不宣称实际节省率。
 
 ## 为什么做 CodexRelay？
 
@@ -29,11 +29,11 @@ Codex 负责规划、判断和验收；DeepSeek 或 OpenAI 兼容模型可以执
 
 ## 下载与安装
 
-**[下载 Windows x64 安装包（v0.3.1 Beta）](https://github.com/Favio8/codexrelay/releases/download/v0.3.1/CodexRelay_0.3.1_x64-setup.exe)**
+**[下载 Windows x64 安装包（v0.4.0 Beta）](https://github.com/Favio8/codexrelay/releases/download/v0.4.0/CodexRelay_0.4.0_x64-setup.exe)**
 
-[Release 说明与 SHA256 校验文件](https://github.com/Favio8/codexrelay/releases/tag/v0.3.1)
+[Release 说明与 SHA256 校验文件](https://github.com/Favio8/codexrelay/releases/tag/v0.4.0)
 
-当前发布版本为 **0.3.1 Beta**，原引擎与 Pi 均支持独立轮次预算、上下文摘要、持久化 checkpoint 和 Codex 核验后的剩余工作续作。0.2.2 的单实例和原目录升级修复保留。升级后在「设置与诊断」更新托管规则并重启 Codex，以加载新增工具；详细功能与验证见 [0.3.1 发布记录](docs/RELEASE-0.3.1.md)。
+当前发布版本为 **0.4.0 Beta**。原引擎与 Pi 延续独立预算、checkpoint 和核验后剩余事项续作；新增接入诊断、选择性修复和受控评测。升级后在「设置与诊断」检查接入、预览所需能力与规则变更，应用后重新连接 Codex 验证当前聊天。配置写入不代表客户端已加载全部能力。详见 [发布记录](docs/RELEASE-0.4.0.md)。
 
 - 当前优先支持 Windows；已在 Windows 11 x64 验证。界面为简体中文。
 - 需要已有 Codex Desktop；同一 MCP 接入可用于 Codex CLI。
@@ -43,9 +43,9 @@ Codex 负责规划、判断和验收；DeepSeek 或 OpenAI 兼容模型可以执
 
 ## 三步开始
 
-1. **添加供应商。** 打开「供应商」，选择 DeepSeek 官方或自定义 OpenAI 兼容服务，填写地址、Key 和模型，点击测试连接。测试会调用真实 API。
+1. **添加供应商。** 打开「供应商」，选择 DeepSeek 官方或自定义 OpenAI 兼容服务，填写地址、Key 和模型，点击测试连接。快速测试发起一次真实模型请求，最多等待 12 秒；「完整工具验证」另行验证工具调用，运行预算为 45 秒。快速成功只表示模型可响应；后端面板的「执行后端验证」会实际读取隔离文件，结果独立保存。
 2. **接入 Codex。** 在「设置与诊断」点击接入。已有 deepseek-as-subagent 配置可使用「接管已有接入」，导入供应商与模型，并备份旧配置。
-3. **重启并开启。** 首次接入后重启 Codex Desktop，在新会话中让 Codex 调用 `codexrelay` 的 `ping`，确认工作区正确，再开启总开关。
+3. **重新连接并验证。** 首次接入或修复后重新连接 Codex，在新聊天调用 `ping` 核对工作区、导入该聊天的工具报告并按需验证能力，再选择是否开启总开关。
 
 随后正常提出任务，Codex 根据任务是否适合决定委托。日常开关、供应商切换和项目禁用不需要重启 Codex。
 
@@ -61,7 +61,7 @@ Codex 负责规划、判断和验收；DeepSeek 或 OpenAI 兼容模型可以执
 | 退出 Codex 或结束它的 MCP 引擎 | 当前执行可能中断；重开后检查部分修改 |
 | 重启电脑后打开 Codex | 自动读取已保存配置；无需重新接入 |
 
-「已接入」表示配置已经写入；是否实际能执行任务，可以在 Codex 中调用一次 MCP ping 检查。已配置却显示同名冲突时，应更新应用并运行检查，不要反复重新接入或删除其他配置。
+配置写入与 ping 成功分别只证明配置存在、该入口可调用。0.4.0 的接入完整性面板会区分配置推算、客户端报告和实际调用；应用修复后仍需重新连接验证当前聊天的具体能力。快速响应、模型工具协议和执行后端读文件也分别验证、分别计量。已配置却显示同名冲突时，应运行检查，不要反复重新接入或删除其他配置。
 
 ## 主要功能
 
@@ -75,7 +75,9 @@ Codex 负责规划、判断和验收；DeepSeek 或 OpenAI 兼容模型可以执
 | 执行设置与授权 | 调整新任务默认次数；为当前任务追加次数或设置后续预算 |
 | 上下文与证据 | 有界读取、结构化摘要、合法上下文重建；checkpoint 保留实际工具证据和恢复引用 |
 | 托盘 | 关闭窗口收起到托盘，随时查看状态和切换总开关 |
-| 接入与迁移 | 管理本软件的 MCP 注册；导入已有 DeepSeek 接入 |
+| 接入与迁移 | 版本化能力诊断；选择性修复预览、备份与并发校验；导入已有 DeepSeek 接入 |
+| 分层验证 | 模型响应、工具协议、后端实际读文件分别验证；档位、修订与探针用量分开记录 |
+| 受控收益评测 | 冻结五类案例、绑定会话、累计授权与独立评分；保留失败、未知费用及负收益 |
 | 诊断与恢复 | 区分认证、额度、限流、本地预算及模型历史错误；保留部分修改供核验 |
 | 配置与卸载 | 接入前备份，卸载选择性解除接入，保留其他 Codex 配置 |
 | 凭据 | Key 保存到 Windows Credential Manager |
@@ -112,7 +114,7 @@ Key 在 Windows Credential Manager；配置、任务历史和恢复记录默认�
 
 **供应商兼容性如何？**
 
-已验证官方 DeepSeek。自定义服务需支持 Chat Completions、工具调用及配置模型所需字段；不同服务的兼容程度可能不同。
+官方 DeepSeek 有此前版本的实测记录；0.4.0 新功能的本轮验证使用本地模型替身，真实模型验证另列。自定义服务需支持 Chat Completions、工具调用及配置模型所需字段，不同服务的兼容程度可能不同。
 
 **停止任务后怎么办？**
 
@@ -130,7 +132,7 @@ npm run desktop:dev
 
 [开发与构建](docs/DEVELOPMENT.md) · [架构](docs/ARCHITECTURE.md) · [测试与已验证范围](docs/TESTING.md) · [贡献指南](CONTRIBUTING.md)
 
-当前公开发布版 **0.3.1 Beta** 包含 Pi Agent SDK 后端、委托用量/费用估算、逐响应缓存计量、默认关闭的 Codex 日志用量对照，以及核验后续作与单任务授权。详见 [54 项验收记录](docs/EXECUTION-ACCEPTANCE.md)。自动更新与多代理并发仍不包含在本版本。
+当前公开发布版 **0.4.0 Beta** 提供上述接入、委托和评测工具。[27 项验收矩阵](docs/DELEGATION-ACCEPTANCE.md) 中 19 项本地验证、7 项部分验证，真实六聊天尚未执行。45 试次是未授权的准备材料；净收益仍未知。自动更新与多代理并发不包含在本版本。
 
 ## 致谢与许可
 

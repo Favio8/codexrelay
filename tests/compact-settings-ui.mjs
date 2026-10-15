@@ -75,7 +75,7 @@ try{
  assert.equal(await panel.locator('.error-details').getAttribute('open'),null);
  await panel.locator('.error-details summary').click();assert((await panel.innerText()).includes('SQLITE_BUSY'));
  await panel.getByRole('combobox',{name:'执行引擎',exact:true}).selectOption('pi');
- await panel.getByRole('button',{name:'应用设置'}).click();await panel.getByText('设置已应用，新任务使用此组合。',{exact:true}).waitFor();
+ await panel.getByRole('button',{name:'应用设置'}).click();await page.getByText('设置已应用，新任务使用此组合。',{exact:true}).waitFor();
  assert.equal((await rpc('snapshot')).data.active_backend,'pi');
  assert.equal((await rpc('snapshot')).data.providers[0].name,'DeepSeek（已导入）');
  // Paid connection probes also must not be repeated after an uncertain result.

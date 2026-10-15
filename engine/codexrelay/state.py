@@ -47,7 +47,7 @@ def process_identity(pid):
 
 
 class Store:
-    SCHEMA_VERSION = 4
+    SCHEMA_VERSION = 5
 
     def __init__(self, directory=None):
         self.directory = Path(directory) if directory else home()
@@ -79,7 +79,18 @@ class Store:
                 CREATE TABLE IF NOT EXISTS execution_evidence (run_id TEXT NOT NULL, sequence INTEGER NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(run_id,sequence));
                 CREATE TABLE IF NOT EXISTS task_bodies (run_id TEXT PRIMARY KEY, body TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS context_archives (run_id TEXT NOT NULL, epoch INTEGER NOT NULL, sha256 TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(run_id,epoch));
-                PRAGMA user_version=4;
+                CREATE TABLE IF NOT EXISTS probe_records (id TEXT PRIMARY KEY, occurred_at REAL NOT NULL, payload TEXT NOT NULL);
+                CREATE INDEX IF NOT EXISTS probe_records_date ON probe_records(occurred_at);
+                CREATE TABLE IF NOT EXISTS client_bindings (id TEXT PRIMARY KEY, payload TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS client_calls (id TEXT PRIMARY KEY, instance TEXT NOT NULL, occurred_at REAL NOT NULL, payload TEXT NOT NULL);
+                CREATE INDEX IF NOT EXISTS client_calls_instance ON client_calls(instance,occurred_at);
+                CREATE TABLE IF NOT EXISTS evaluation_experiments (id TEXT PRIMARY KEY,payload TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS evaluation_trials (id TEXT PRIMARY KEY,experiment_id TEXT NOT NULL,payload TEXT NOT NULL);
+                CREATE INDEX IF NOT EXISTS evaluation_trials_experiment ON evaluation_trials(experiment_id);
+                CREATE TABLE IF NOT EXISTS evaluation_requests (id TEXT PRIMARY KEY,experiment_id TEXT NOT NULL,trial_id TEXT,payload TEXT NOT NULL);
+                CREATE INDEX IF NOT EXISTS evaluation_requests_experiment ON evaluation_requests(experiment_id);
+                CREATE TABLE IF NOT EXISTS evaluation_usage_events (id TEXT PRIMARY KEY,trial_id TEXT NOT NULL,payload TEXT NOT NULL);
+                PRAGMA user_version=5;
             """)
             # Move old full results without changing their execution/verification semantics.
             # Counters remain in the lightweight row for existing usage aggregation.
@@ -392,6 +403,9 @@ class Store:
                 self._reap(db)
             result = {r[0]: json.loads(r[1]) for r in db.execute("SELECT key,value FROM settings")}
             result.pop('usage_prices', None)
+            # Evidence is read on demand; never reload the call/report ledger every two seconds.
+            result.pop('integration_client_reports_v1', None)
+            result.pop('integration_call_evidence_v1', None)
             result['usage_source'] = str(self.directory.resolve())
             result["providers"] = [json.loads(r[0]) for r in db.execute("SELECT payload FROM providers")]
             result["projects"] = [dict(path=r[0], disabled=bool(r[1])) for r in db.execute("SELECT path,disabled FROM projects")]

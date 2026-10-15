@@ -148,11 +148,20 @@ def _start_tool(timeout: float, lease_fd: int | None) -> subprocess.Popen[bytes]
             start_new_session=True,
             **options,
         )
+        if os.name == "nt":
+            from .bash_tool import _create_windows_job
+            # The child blocks on stdin until communication starts. Assign it
+            # now so every future command descendant belongs to a job whose
+            # handle survives forced termination of the tool child itself.
+            process._deepseek_tool_job = _create_windows_job(process)
         lease_anchor.close_parent_copy()
         liveness.attach(process)
         return process
     except BaseException:
         if process is not None:
+            job = getattr(process, '_deepseek_tool_job', None)
+            if job is not None:
+                job.close()
             _stop_process(process)
             _close_process_pipes(process)
         liveness.close()
@@ -266,7 +275,10 @@ def _cleanup_tool_process(
     transaction_id: str,
 ) -> None:
     try:
-        if not _stop_process(process):
+        job = getattr(process, '_deepseek_tool_job', None)
+        job_ok = job.close() if job is not None else True
+        process_ok = _stop_process(process)
+        if not job_ok or not process_ok:
             raise AgentLoopError("tool process cleanup failed")
         if started:
             communication.join(PROCESS_STOP_SECONDS)

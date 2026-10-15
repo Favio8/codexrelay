@@ -5,13 +5,13 @@
 
 **Let Codex delegate to DeepSeek. Manage external agents with a switch.**
 
-[![Release](https://img.shields.io/github/v/release/Favio8/codexrelay?include_prereleases)](https://github.com/Favio8/codexrelay/releases/tag/v0.3.1)
+[![Release](https://img.shields.io/github/v/release/Favio8/codexrelay?include_prereleases)](https://github.com/Favio8/codexrelay/releases/tag/v0.4.0)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-[简体中文](README.md) · English · [Download](https://github.com/Favio8/codexrelay/releases/tag/v0.3.1)
+[简体中文](README.md) · English · [Download](https://github.com/Favio8/codexrelay/releases/tag/v0.4.0)
 </div>
 
-**0.3.1 Windows Beta** adds verified continuations, persistent checkpoints and per-task App authorization, and fixes excessive reading of minified files under low budgets. See [release details](docs/RELEASE-0.3.1.md) and [acceptance evidence](docs/EXECUTION-ACCEPTANCE.md).
+**0.4.0 Windows Beta** adds capability diagnosis and selective repair previews, separate response/tool/backend probes, explicit client/trial evidence, and controlled evaluation with frozen cases. See the [release record](docs/RELEASE-0.4.0.md), [27-item acceptance matrix](docs/DELEGATION-ACCEPTANCE.md) and [experiment instructions](docs/DELEGATION-EXPERIMENTS.md). Real-client six-scenario and paid-model comparisons have not run; no real savings claim is made.
 
 A Windows desktop manager for Codex external agents. Codex plans and reviews; DeepSeek or an OpenAI-compatible provider executes suitable independent tasks through MCP.
 
@@ -21,15 +21,15 @@ A Windows desktop manager for Codex external agents. Codex plans and reviews; De
 
 ## Download
 
-[Windows x64 installer — v0.3.1 Beta](https://github.com/Favio8/codexrelay/releases/download/v0.3.1/CodexRelay_0.3.1_x64-setup.exe) · [Release notes and checksums](https://github.com/Favio8/codexrelay/releases/tag/v0.3.1)
+[Windows x64 installer — v0.4.0 Beta](https://github.com/Favio8/codexrelay/releases/download/v0.4.0/CodexRelay_0.4.0_x64-setup.exe) · [Release notes and checksums](https://github.com/Favio8/codexrelay/releases/tag/v0.4.0)
 
-The current release is **0.3.1 Beta**. Both the original engine and Pi support independent Run budgets, structured context summaries, persistent checkpoints and remaining-only continuation after Codex verification. It retains the 0.2.2 single-instance and in-place upgrade fixes. After upgrading, update managed rules in Settings and restart Codex to load the new tools. See the [0.3.1 release record](docs/RELEASE-0.3.1.md) for changes and verification.
+The current release is **0.4.0 Beta**. Both backends retain independent Run budgets, checkpoints and verified remaining-only continuation. After upgrading, inspect integration, review selected tool/rule repairs, then reconnect Codex and verify the current chat. Saved configuration and a ping do not establish full client capability. See the [release record](docs/RELEASE-0.4.0.md).
 
 Verified on Windows 11 x64. Requires an existing Codex installation. Python and the Node runtime for Pi are bundled; end users do not need developer tools. The installer downloads WebView2 if missing. This beta is unsigned and has no automatic updater.
 
 ## Get started
 
-1. Add a DeepSeek or OpenAI-compatible provider, API key and models. Connection tests make a real API request.
+1. Add a DeepSeek or OpenAI-compatible provider, API key and models. Quick connection tests make one real model request with a 12-second deadline. Full tool verification is separate, with a 45-second execution budget; quick success only confirms that the model responds.
 2. Register CodexRelay in Settings. Existing deepseek-as-subagent registrations can be imported and backed up.
 3. Restart Codex Desktop, call the MCP `ping` tool in a new session to verify the workspace, then enable delegation.
 
@@ -42,6 +42,9 @@ Registration is a one-time setup. Afterwards, open Codex directly: the saved swi
 - Global switch and per-project disable; switching off blocks new work while existing work finishes.
 - Provider management with Flash / Pro model slots and per-task token budgets.
 - Task status, tool records, cancellation, diagnostics and recovery records.
+- Versioned capability diagnosis, selective repair previews, encrypted backups and concurrent-edit checks.
+- Separate response, tool-protocol and real backend file-read probes with independent evidence and usage.
+- Frozen evaluation cases, explicit sessions, cumulative authorization and independent scoring; failures and unknown costs remain visible.
 - Independent Run budgets with up to three continuations by default, each following parent verification.
 - App defaults and per-task grants for additional rounds or subsequent budgets.
 - Bounded reading, structured context rebuilds and checkpoints with actual evidence and recovery references.
@@ -59,7 +62,7 @@ The switch controls CodexRelay external agents only. It does not disable Codex's
 
 Tauri 2 / Rust / React / TypeScript / Python 3.12 / SQLite.
 
-See [development](docs/DEVELOPMENT.md), [architecture](docs/ARCHITECTURE.md), [testing](docs/TESTING.md) and [contributing](CONTRIBUTING.md). The published **0.3.1 Beta** includes the Pi Agent SDK backend, delegated usage/cost estimates, response-level cache accounting, default-off Codex log statistics and verified continuations with per-task grants. See [54-case acceptance scope](docs/EXECUTION-ACCEPTANCE.md). Automatic updates and concurrent agents remain outside this release.
+See [development](docs/DEVELOPMENT.md), [architecture](docs/ARCHITECTURE.md), [testing](docs/TESTING.md) and [contributing](CONTRIBUTING.md). The **0.4.0 Beta** acceptance matrix records 19 locally verified conditions, seven partially verified conditions and one real-client six-scenario condition not run. Forty-five trials are prepared only, without paid authorization. Real net benefit is unknown. Automatic updates and concurrent agents remain outside this release.
 
 ## Credits and license
 

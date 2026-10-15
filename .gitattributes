@@ -11,3 +11,6 @@
 *.png binary
 *.ico binary
 *.icns binary
+*.crate binary
+# Preserve upstream license text, including its original trailing whitespace.
+/vendor/licenses/** -whitespace

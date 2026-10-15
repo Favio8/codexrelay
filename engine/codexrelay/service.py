@@ -93,39 +93,9 @@ class Service:
         self.vault.delete(provider["credential_id"])
         return {"deleted": True}
 
-    def test_provider(self, id):
-        from openai import OpenAI
-        provider = self.store.provider(id)
-        secret = self.vault.get(provider["credential_id"])
-        address = urlsplit(provider["base_url"])
-        if not secret and address.hostname not in {"localhost", "127.0.0.1", "::1"}:
-            raise ValueError("请先保存 API Key")
-        client = OpenAI(api_key=secret or "local", base_url=provider["base_url"], timeout=25, max_retries=0)
-        model = provider["flash_model"]
-        tools = [{"type": "function", "function": {"name": "relay_probe", "description": "Verify the tool connection", "parameters": {"type": "object", "properties": {}, "additionalProperties": False}}}]
-        messages = [{"role": "user", "content": "Call relay_probe once, then reply CONNECTED after its result."}]
-        try:
-            first = client.chat.completions.create(model=model, messages=messages, tools=tools, max_tokens=512)
-            message = first.choices[0].message
-            if not message.tool_calls or any(c.function.name != "relay_probe" for c in message.tool_calls):
-                raise ValueError("模型未返回要求的结构化工具调用，请检查模型兼容性")
-            messages.append(message.model_dump(exclude_none=True))
-            messages.extend({"role": "tool", "tool_call_id": call.id, "content": "CONNECTED"} for call in message.tool_calls)
-            final = client.chat.completions.create(model=model, messages=messages, max_tokens=512)
-            if not final.choices[0].message.content:
-                raise ValueError("模型收到工具结果后未返回有效回复")
-        except ValueError:
-            raise
-        except Exception as exc:
-            code = getattr(exc, "status_code", None)
-            raise ValueError(f"连接测试失败：{type(exc).__name__}" + (f" (HTTP {code})" if code else "，请检查网络与供应商设置")) from None
-        finally:
-            client.close()
-        latest = self.store.provider(id)
-        if latest["revision"] == provider["revision"]:
-            latest["last_test"] = {"ok": True, "at": time.time(), "model": model, "revision": provider["revision"]}
-            self.store.save_provider(latest)
-        return {"ok": True, "model": model, "tool_roundtrip": True}
+    def test_provider(self, id, slot='flash', verification='full', probe_id=None, experiment_id=None):
+        from .probe_service import test
+        return test(self, id, slot, verification, probe_id=probe_id, experiment_id=experiment_id)
 
     def diagnostics(self):
         from . import __version__
@@ -137,34 +107,20 @@ class Service:
                 "active_tasks": [t["id"] for t in snapshot["tasks"] if t["status"] in {"queued", "running", "cancelling", "compacting", "wrapping_up"}],
                 "connections": snapshot["instances"], "integration": status(self.store)}
 
-    def test_backend(self, backend, provider_id, slot='flash'):
-        import tempfile
-        from dataclasses import replace
-        from .backends import build_config, create_manager
-        if slot not in {'flash','pro'}:raise ValueError('未知模型档位')
-        provider=self.store.provider(provider_id)
-        credential=self.vault.get(provider['credential_id'])
-        with tempfile.TemporaryDirectory(prefix='codexrelay-probe-') as directory:
-            workspace=Path(directory)
-            marker=uuid.uuid4().hex
-            (workspace/'probe.txt').write_text(marker,encoding='utf-8')
-            config=replace(build_config(provider,'readonly',slot,workspace,credential),
-                           max_output_tokens=512,max_turns=4,max_run_seconds=45,max_total_tokens=32768)
-            # Reserve the same database slot as delegation before calling the provider;
-            # a snapshot check alone races with another MCP or GUI process.
-            with self.store.backend_probe(provider, backend, slot, workspace):
-                try:
-                    result=create_manager(backend).run_sync('Read probe.txt with the Read tool and return its exact contents.',config)
-                except Exception as error:
-                    message=str(error)
-                    raise ValueError(message.replace(credential,'[REDACTED]') if credential else message) from None
-            if not result.get('tool_calls') or marker not in result.get('final_message',''):
-                raise ValueError('后端未完成实际文件读取，请检查模型工具兼容性')
-        status={'ok':True,'backend':backend,'model':provider[slot+'_model'],'revision':provider['revision'],'at':time.time(),'tool_roundtrip':True}
-        self.store.set_setting('backend_test:'+backend+':'+provider_id+':'+slot,status)
-        return status
+    def test_backend(self, backend, provider_id, slot='flash', verification='backend', probe_id=None, experiment_id=None):
+        from .probe_service import test
+        return test(self, provider_id, slot, verification, backend, probe_id, experiment_id)
 
     def dispatch(self, method, params):
+        if method == 'evaluation':
+            from .evaluation import dispatch
+            return dispatch(self.store, **params)
+        if method in {'probe_records', 'probe_usage_today', 'cancel_probe'}:
+            from .probe_service import records, usage_today, cancel
+            return {'probe_records': records, 'probe_usage_today': usage_today, 'cancel_probe': cancel}[method](self.store, **params)
+        if method == 'client_evidence':
+            from .client_evidence import chain
+            return chain(self.store, **params)
         if method in {'set_execution_defaults', 'extend_task_authorization', 'get_task_group', 'get_task_checkpoint'}:
             from . import task_groups
             action = {'set_execution_defaults': task_groups.set_defaults, 'extend_task_authorization': task_groups.extend,
@@ -239,7 +195,7 @@ class Service:
         if method == "cancel_task":
             return self.store.cancel(params["id"])
         if method == "test_provider":
-            return self.test_provider(params["id"])
+            return self.test_provider(**params)
         if method == "legacy_preview":
             from .legacy import preview
             return preview(params.get("codex_home"))

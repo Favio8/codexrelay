@@ -2,7 +2,7 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 export class RpcError extends Error {
  constructor(message:string, public details='', public code='') {super(message);this.name='RpcError';}
 }
-const readMethods=new Set(['snapshot','integration_preview','backend_catalog','get_task','get_usage_prices','codex_usage_settings','get_task_group','get_task_checkpoint']);
+const readMethods=new Set(['snapshot','integration_preview','integration_status','integration_repair_preview','integration_verification_instructions','probe_records','probe_usage_today','backend_catalog','get_task','get_usage_prices','codex_usage_settings','get_task_group','get_task_checkpoint']);
 export async function rpc<T = any>(method: string, params: Record<string, unknown> = {}): Promise<T> {
  if (!isTauri()) throw new Error('请在 CodexRelay 桌面应用中使用此功能。浏览器仅用于界面预览。');
  for(let attempt=0;;attempt++) {

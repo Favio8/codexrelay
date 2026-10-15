@@ -17,6 +17,7 @@ from .vault import Vault
 from .failures import classify_error
 from . import __version__
 from . import task_groups as groups
+from . import client_evidence
 
 
 def encode(value):
@@ -72,6 +73,16 @@ class Relay:
         credential = self.vault.get(provider['credential_id'])
         config = self.config(provider, mode, slot, credential)
         group = groups.get(self.store, group_id) if group_id else None
+        # A prepared evaluation workspace must not silently run outside its ledger.
+        with self.store.connect() as db:
+            trials = [json.loads(row[0]) for row in db.execute('SELECT payload FROM evaluation_trials')]
+        scoped_trials = [trial for trial in trials if Path(trial['workspace']).resolve() == self.workspace.resolve()]
+        if scoped_trials:
+            trial = next((trial for trial in scoped_trials if trial['state'] == 'running'), None)
+            if not trial or not group or group.get('experiment_id') != trial['experiment_id'] or group.get('trial_id') != trial['id']:
+                raise ValueError('EXPERIMENT_BINDING_REQUIRED: use the running trial and its explicitly bound TaskGroup')
+            if not continuation and task != group['original_goal']:
+                raise ValueError('EXPERIMENT_INPUT_CHANGED: first Run must use the frozen task text')
         if group:
             contract = group['task_contract']
             if mode != contract['capability']: raise ValueError('capability cannot expand or change')
@@ -115,7 +126,11 @@ class Relay:
         if pending['checks']: raise ValueError('WORKSPACE_REVIEW_REQUIRED: pending review_ids=' + json.dumps([r['review_id'] for r in pending['checks']]))
         details = dict(task_root=str(config.task_root or config.workspace), token_budget=config.max_total_tokens, budget_source=source,
                        write_paths=[str(p) for p in config.write_paths] if config.write_paths is not None else None,
-                       task_kind=task_kind, context=context, acceptance=acceptance, context_window=config.context_window)
+                       task_kind=task_kind, context=context, acceptance=acceptance, context_window=config.context_window,
+                       reasoning_effort=config.reasoning_effort, model_slot=slot)
+        if group:
+            details.update({key: group[key] for key in ('client_binding_id', 'experiment_id', 'trial_id') if group.get(key)})
+        details['mcp_instance'] = self.instance
         record = self.store.admit(task, self.workspace, mode, slot, expected_provider=provider, backend=backend, expected_backend=selected, backend_capabilities=capabilities,
                                   group_id=group_id, run_details=details, continuation=continuation)
         identifier = record["id"]
@@ -123,6 +138,13 @@ class Relay:
         actual_group = groups.get(self.store, record['group_id'])
         config = replace(config, task_contract=actual_group['task_contract'])
         try:
+            if record.get('experiment_id'):
+                from .evaluation import Evaluation
+                from .request_gate import ExperimentRequestGate
+                Evaluation(self.store).attach_run(record['trial_id'], record['group_id'], identifier, backend,
+                    workspace=str(self.workspace), model=record['model'], provider_revision=record.get('provider_revision'),
+                    reasoning=config.reasoning_effort)
+                config = replace(config, request_guard=ExperimentRequestGate(self.store, record))
             def report(value):
                 phase = value.get('execution_phase', 'running')
                 current = self.store.task(identifier)
@@ -180,16 +202,43 @@ class Relay:
                 time.sleep(.2)
             self.store.update_task(identifier, status="failed", finished_at=time.time(), error=type(exc).__name__)
 
-    def create_group(self, goal, task_kind='implementation', capability='coding', task_root=None, write_paths=None, constraints='', acceptance='', title=None):
+    def create_group(self, goal, task_kind='implementation', capability='coding', task_root=None, write_paths=None, constraints='', acceptance='', title=None,
+                     client_binding_id=None, experiment_id=None, trial_id=None):
         validate_delegation_input(goal, constraints)
         if task_kind == 'testing' and write_paths is None: write_paths = []
         config = Config(api_key='', workspace=self.workspace, allowed_tools=[], task_root=Path(task_root) if task_root else None,
                         write_paths=[Path(p) for p in write_paths] if write_paths is not None else None)
+        if client_binding_id:
+            binding = client_evidence.get_binding(self.store, client_binding_id, self.workspace, self.instance)
+        if bool(experiment_id) != bool(trial_id):
+            raise ValueError('experiment_id and trial_id must be provided together')
+        if experiment_id:
+            from .evaluation import Evaluation
+            experiment = Evaluation(self.store).describe(experiment_id)
+            trial = next((t for t in experiment['trials'] if t['id'] == trial_id), None)
+            if not trial or trial['state'] != 'running' or trial['group'] == 'A' or Path(trial['workspace']).resolve() != self.workspace.resolve():
+                raise ValueError('Experiment group requires its running isolated trial workspace')
+            reported = trial.get('binding') or {}
+            if not client_binding_id or not reported or any(binding[key] != reported[key] for key in ('session_id','root_session_id')):
+                raise ValueError('Experiment group requires the trial\'s explicitly bound root/session')
+            kind = {'desktop':'desktop','cli':'cli','local_stdio':'local_substitute',
+                    'app_self_test':'local_substitute','other':'local_substitute'}.get(binding['client_kind'])
+            if kind != reported.get('client_kind'):
+                raise ValueError('EXPERIMENT_CLIENT_CHANGED: client kind must match the explicit trial binding')
+            expected = Evaluation(self.store).trial_instruction(trial_id)['client_binding_steps'][1]['params']
+            if (goal != expected['goal'] or task_kind != expected['task_kind'] or capability != expected['capability'] or
+                Path(config.task_root or self.workspace).resolve() != Path(expected['task_root']).resolve() or
+                {str(p).casefold() for p in config.write_paths or []} != {str(Path(p).resolve()).casefold() for p in expected['write_paths']}):
+                raise ValueError('EXPERIMENT_CONTRACT_CHANGED: use the frozen task, kind, capability and scope')
         with self.store.connect() as db:
             db.execute('BEGIN IMMEDIATE')
-            return groups.create(db, canonical(self.workspace), goal, task_kind, capability,
+            group = groups.create(db, canonical(self.workspace), goal, task_kind, capability,
                 config.task_root or self.workspace, [str(p) for p in config.write_paths] if config.write_paths is not None else None,
                 constraints, acceptance, title)
+            group.update({key: value for key, value in dict(client_binding_id=client_binding_id,
+                          experiment_id=experiment_id, trial_id=trial_id).items() if value})
+            groups.save(db, group)
+            return group
 
     def resume(self, group_id, checkpoint_id, checkpoint_sha256, verification_id, remaining_task, idempotency_key, model='flash', token_budget=None, manual_resume=False):
         request = dict(checkpoint_id=checkpoint_id, checkpoint_sha256=checkpoint_sha256, verification_id=verification_id,
@@ -252,10 +301,12 @@ def serve():
             return encode({"ok": False, "error": str(exc)})
 
     @mcp.tool(annotations=readonly)
-    def ping() -> str:
+    def ping(client_binding_id: str | None = None) -> str:
         """Inspect live delegation settings and verify this instance's workspace."""
         relay.store.heartbeat(relay.instance, relay.workspace)
-        return encode({"ok": True, "version": __version__, "workspace": str(relay.workspace), "enabled": relay.store.setting("enabled"), "instance": relay.instance, "active_backend": relay.store.setting('active_backend','deepseek')})
+        from .capabilities import manifest
+        return encode({"ok": True, "version": __version__, "workspace": str(relay.workspace), "enabled": relay.store.setting("enabled"), "instance": relay.instance, "active_backend": relay.store.setting('active_backend','deepseek'),
+                       'server_capabilities': manifest(), 'evidence_source': 'server_declaration'})
 
     @mcp.tool(annotations=mutating)
     def start_deepseek(task: str, context: str = "", model: Literal["flash", "pro"] = "flash", token_budget: int | None = None, task_root: str | None = None, write_paths: list[str] | None = None) -> str:
@@ -349,12 +400,12 @@ def serve():
         return safe(verify)
 
     @mcp.tool(annotations=mutating)
-    def get_deepseek_recovery() -> str:
+    def get_deepseek_recovery(client_binding_id: str | None = None) -> str:
         """Get pending file mutations. Also inspect command-generated workspace changes."""
         return safe(lambda: {"ok": True, **recovery(relay.workspace)})
 
     @mcp.tool(annotations=mutating)
-    def acknowledge_deepseek_mutations(transaction_ids: list[str]) -> str:
+    def acknowledge_deepseek_mutations(transaction_ids: list[str], client_binding_id: str | None = None) -> str:
         """Acknowledge only exact transaction IDs after verifying files and hashes."""
         def acknowledge():
             removed, pending = acknowledge_with_lease(relay.recovery(), transaction_ids)
@@ -391,15 +442,17 @@ def serve():
         mcp.add_tool(function,name=name,annotations=annotations)
 
     @mcp.tool(annotations=mutating)
-    def acknowledge_workspace_review(review_id: str, state_sha256: str, evidence: str) -> str:
+    def acknowledge_workspace_review(review_id: str, state_sha256: str, evidence: str, client_binding_id: str | None = None) -> str:
         """Acknowledge the exact observed workspace state. The evidence is recorded locally before the check is cleared."""
         return safe(lambda: review.acknowledge(relay.recovery(),review_id,state_sha256,evidence))
 
     @mcp.tool(annotations=mutating)
     def create_task_group(goal: str, task_kind: str = 'implementation', capability: str = 'coding', task_root: str | None = None,
-                          write_paths: list[str] | None = None, constraints: str = '', acceptance: str = '', title: str | None = None) -> str:
+                          write_paths: list[str] | None = None, constraints: str = '', acceptance: str = '', title: str | None = None,
+                          client_binding_id: str | None = None, experiment_id: str | None = None, trial_id: str | None = None) -> str:
         """Create a fixed contract without a model call. Reuse this group for the same goal; budget/counters never reset."""
-        return safe(lambda: relay.create_group(goal, task_kind, capability, task_root, write_paths, constraints, acceptance, title))
+        return safe(lambda: relay.create_group(goal, task_kind, capability, task_root, write_paths, constraints, acceptance, title,
+                                             client_binding_id, experiment_id, trial_id))
 
     @mcp.tool(annotations=readonly)
     def get_task_group(group_id: str) -> str:
@@ -430,4 +483,21 @@ def serve():
         """Cancel the execution chain; a checkpoint never automatically resumes cancellation."""
         return safe(lambda: relay.cancel_group(group_id))
 
+    @mcp.tool(annotations=mutating)
+    def bind_client_session(session_id: str, root_session_id: str, client_kind: Literal['desktop','cli','local_stdio','app_self_test','other'],
+                            confirmed: bool, client_version: str | None = None, observation_id: str | None = None) -> str:
+        """Explicitly report this chat's identity. Pass the returned id to create_task_group. This is a report, not client attestation."""
+        return safe(lambda: client_evidence.bind(relay.store, instance=relay.instance, workspace=relay.workspace,
+                    session_id=session_id, root_session_id=root_session_id, client_kind=client_kind,
+                    confirmed=confirmed, client_version=client_version, observation_id=observation_id))
+
+    @mcp.tool(annotations=readonly)
+    def get_client_evidence(group_id: str | None = None) -> str:
+        """Read engine-observed invocation identities. Local stdio, CLI and Desktop reports remain distinct."""
+        return safe(lambda: client_evidence.chain(relay.store, workspace=relay.workspace, group_id=group_id))
+
+    from .call_audit import install_call_audit
+    install_call_audit(mcp, relay)
+    from .capabilities import assert_registered_tools
+    assert_registered_tools([tool.name for tool in mcp._tool_manager.list_tools()])
     mcp.run(transport="stdio")

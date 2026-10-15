@@ -100,10 +100,15 @@ def call_with_retry(
 
 
 def _request_once(config, messages, tools, cancel_signal, deadline):
+    guard = getattr(config, 'request_guard', None)
+    reservation = guard.reserve(config, messages, tools) if guard else None
+    response = None
     try:
-        return request_in_subprocess(
+        result = request_in_subprocess(
             config, messages, tools, cancel_signal, deadline
         )
+        response = result[0]
+        return result
     except ProviderRequestCancelled:
         raise AgentLoopCancelled(
             "DeepSeek job cancelled by parent agent"
@@ -112,6 +117,9 @@ def _request_once(config, messages, tools, cancel_signal, deadline):
         raise AgentLoopError(
             f"run time budget exceeded ({config.max_run_seconds}s)"
         ) from None
+    finally:
+        if guard:
+            guard.settle(reservation, response)
 
 
 def _backoff(

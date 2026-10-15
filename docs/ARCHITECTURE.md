@@ -36,3 +36,13 @@ Codex log import is a separate, default-off feature. It incrementally stores cou
 TaskGroup identity, independent Run budgets, parent verification and App grants are persistent. Both schedulers share pre-request control and provider usage, including summaries and retries. Pi prepareRequest replaces scheduler state at complete exchanges. SQLite schema 4 separates lightweight task metadata from results, checkpoint bodies, tool evidence and sealed context archives; snapshots do not load those bodies. See [contracts and migration](EXECUTION-OPTIMIZATION.md).
 
 The 0.3.1 patch shares adaptive long-line previews and target-first inspection across both schedulers. A real Grep match supplies the text for exact Edit; a broad Read is not mandatory. Budget feedback considers the cost of subsequent input history while the hard limit and usage history stay unchanged. No new schema or SDK dependency is required.
+
+## 0.4.0 local reliability candidate
+
+Schema 5 adds independent probe records, explicit client bindings, body-free MCP invocation references and experiment/trial/request/usage tables. Migration retains existing switches, providers, task history, recovery and prices. Call/report ledgers and experiment bodies are read on demand rather than entering two-second snapshots.
+
+`capabilities.py` is the versioned contract checked against actual MCP registration. `integration.py` produces read-only repair plans with content fingerprints and applies only selected owned changes with encrypted backups and guarded recovery. `integration_evidence.py` keeps server declarations, configuration predictions, user reports and observed calls distinct. A client binding is explicit reported identity; the server cannot attest which desktop UI is open.
+
+`connection_probe.py` owns killable response/tool/backend probes. `probe_service.py` records immutable attempts and provides revision-filtered views and independent probe usage. Actual backend probes share the task occupancy slot and verify tool results against an isolated random file marker. Credentials stay at the Python boundary, including when Pi schedules requests.
+
+`evaluation.py` freezes materials, explicit session bindings, authorization and independent scoring. `request_gate.py` runs at the shared provider retry boundary before every actual attempt, including summaries and experiment-bound probes. Reservations remain charged when usage is unknown. Token/cost reservations are conservative local admission bounds; provider billing can differ. Main-model requests remain host managed. See [contracts and unverified real-client conditions](DELEGATION-ACCEPTANCE.md).

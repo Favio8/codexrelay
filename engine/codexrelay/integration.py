@@ -11,12 +11,16 @@ import time
 import uuid
 from pathlib import Path
 import tomlkit
+from .capabilities import TOOL_NAMES, capability_states, digest, manifest, scope_tools
 
 BEGIN = "<!-- BEGIN CodexRelay managed delegation -->"
 END = "<!-- END CodexRelay managed delegation -->"
+RULES_VERSION = "1.0.0"
 OLD_BEGIN = "<!-- BEGIN deepseek-as-subagent global delegation policy -->"
 OLD_END = "<!-- END deepseek-as-subagent global delegation policy -->"
 RULES = BEGIN + """
+
+<!-- CodexRelay rules contract: 1.0.0 -->
 
 ## CodexRelay external subagents
 
@@ -130,23 +134,278 @@ def owned(entry, store=None, directory=None):
 
 
 def strip_block(text, start, end):
-    if text.count(start) != text.count(end) or text.count(start) > 1:
+    if text.count(start) != text.count(end) or text.count(start) > 1 or (start in text and text.index(start) >= text.index(end)):
         raise ValueError("委托规则标记不完整或重复，请先检查 AGENTS.md")
     return re.sub(re.escape(start) + r".*?" + re.escape(end), "", text, flags=re.S)
 
 
-def status(store, codex_home=None):
+def rules_status(value):
+    try:
+        text = decode(value)
+        strip_block(text, BEGIN, END)
+        strip_block(text, OLD_BEGIN, OLD_END)
+    except (ValueError, UnicodeError):
+        return {"state": "malformed", "version": None, "expected_version": RULES_VERSION,
+                "reason": "托管规则标记不完整或重复；无法安全自动替换"}
+    block = re.search(re.escape(BEGIN) + r".*?" + re.escape(END), text, re.S)
+    version = re.search(r"CodexRelay rules contract: ([^ ]+)", block.group(0)) if block else None
+    return {"state": "missing" if not block else "current" if block.group(0).replace("\r\n", "\n").strip() == RULES.strip() else "outdated",
+            "version": version.group(1) if version else None, "expected_version": RULES_VERSION,
+            "legacy_block": OLD_BEGIN in text}
+
+
+def predict_tools(entry, store, directory, parse_error=None):
+    unknown, tool_states = [], {}
+    if parse_error:
+        unknown.append(parse_error)
+    values = entry.unwrap() if hasattr(entry, "unwrap") else entry or {}
+    registration = "missing" if not entry else "owned" if owned(entry, store, directory) else "foreign"
+    command_exists = Path(values.get("command", "")).is_file() if entry else None
+    command_state = "command_available" if command_exists else "command_missing" if entry else "not_registered"
+    enabled = values.get("enabled", True)
+    if not isinstance(enabled, bool):
+        unknown.append("enabled 不是布尔值")
+        enabled = None
+    allowed, denied = values.get("enabled_tools"), values.get("disabled_tools", [])
+    if allowed is not None and (not isinstance(allowed, list) or any(not isinstance(item, str) for item in allowed)):
+        unknown.append("enabled_tools 不是工具名列表")
+        allowed = None
+    if not isinstance(denied, list) or any(not isinstance(item, str) for item in denied):
+        unknown.append("disabled_tools 不是工具名列表")
+        denied = []
+    policy = values.get("tools", {})
+    if not isinstance(policy, dict):
+        unknown.append("逐工具策略结构未知")
+        policy = {}
+    for name, item in policy.items():
+        if not isinstance(item, dict) or set(item) - {"enabled", "approval_mode"} or ("enabled" in item and not isinstance(item["enabled"], bool)):
+            unknown.append("逐工具策略无法完整解释: " + name)
+    known_fields = {"command", "args", "enabled", "enabled_tools", "disabled_tools", "tools", "startup_timeout_sec", "startup_timeout_ms", "tool_timeout_sec", "default_tools_approval_mode", "required"}
+    unknown.extend("未验证的服务器字段: " + key for key in values if key not in known_fields)
+    for name in sorted(TOOL_NAMES):
+        reasons = []
+        if registration != "owned": reasons.append("server_" + registration)
+        if command_state == "command_missing": reasons.append("command_missing")
+        if enabled is False: reasons.append("server_disabled")
+        if allowed is not None and name not in allowed: reasons.append("not_allowlisted")
+        if name in denied: reasons.append("explicitly_denied")
+        if isinstance(policy.get(name), dict) and policy[name].get("enabled") is False: reasons.append("tool_disabled")
+        tool_states[name] = {"state": "blocked" if reasons else "unknown" if unknown else "predicted_available", "reasons": reasons}
+    effective = [name for name, value in tool_states.items() if value["state"] == "predicted_available"]
+    return {"registration_state": registration, "command_state": command_state, "command_exists": command_exists,
+            "server_enabled": enabled, "allowlist_state": "unset" if "enabled_tools" not in values else "empty" if allowed == [] else "configured",
+            "enabled_tools": allowed, "disabled_tools": denied, "tool_states": tool_states,
+            "effective_tools": effective, "capabilities": capability_states(effective, bool(unknown)),
+            "unknown_policies": unknown, "policy_semantics": "Codex MCP config 76ed3b484d62: allowlist then denylist; tools.enabled=false",
+            "limitations": ["组织策略及客户端实际工具加载状态不可由静态配置证明", "注册目标运行时版本需要客户端 ping 核对"]}
+
+
+def _repair_data(store, codex_home=None, capability_scope="full", remove_denials=None,
+                 update_registration=True, update_rules=True, enable_server=False):
+    if any(not isinstance(item, bool) for item in (update_registration, update_rules, enable_server)):
+        raise ValueError("repair selections must be booleans")
+    required = scope_tools(capability_scope)
+    remove_denials = remove_denials or []
+    if not isinstance(remove_denials, list) or any(name not in TOOL_NAMES for name in remove_denials):
+        raise ValueError("remove_denials must select declared tool names")
     directory = codex_dir(codex_home)
-    config = tomlkit.parse(decode(read(directory / "config.toml")))
+    config_path, rules_path = directory / "config.toml", directory / "AGENTS.md"
+    before_config, before_rules = read(config_path), read(rules_path)
+    config = tomlkit.parse(decode(before_config))
+    servers = config.get("mcp_servers", {})
+    entry = servers.get("codexrelay")
+    conflicts, changes = [], []
+    if entry and not owned(entry, store, directory):
+        conflicts.append("已有同名 codexrelay 配置不属于本软件；不能自动接管")
+    if "deepseek" in servers and not entry:
+        conflicts.append("检测到旧 DeepSeek 接入；请明确迁移，不能通过修复建立重复接入")
+    additions, cleared, retained = [], [], []
+    if update_registration and not conflicts:
+        servers = config.setdefault("mcp_servers", tomlkit.table())
+        if entry is None:
+            entry = tomlkit.table()
+            entry.add(tomlkit.comment("Managed by CodexRelay"))
+            entry["command"] = str(Path(sys.executable).resolve())
+            entry["args"] = ["-I", "-X", "utf8", "-m", "codexrelay", "mcp"]
+            entry["startup_timeout_sec"], entry["tool_timeout_sec"] = 20, 18060
+            entry["default_tools_approval_mode"] = "writes"
+            servers["codexrelay"] = entry
+            changes.append({"target": "config.toml:mcp_servers.codexrelay", "operation": "register_owned_runtime"})
+        # Never replace a whole table: tomlkit preserves comments, extra entries
+        # and per-tool approval settings while the chosen delta is applied.
+        disabled = entry.get("disabled_tools", [])
+        if not isinstance(disabled, list):
+            conflicts.append("disabled_tools 结构未知，不能自动修复")
+        else:
+            for name in remove_denials:
+                if name in disabled:
+                    disabled.remove(name)
+                    cleared.append(name)
+            policies = entry.get("tools", {})
+            for name in remove_denials:
+                item = policies.get(name) if isinstance(policies, dict) else None
+                if item is not None and item.get("enabled") == False:
+                    item["enabled"] = True
+                    cleared.append(name)
+            retained = sorted(set(disabled).intersection(TOOL_NAMES) | {name for name, item in policies.items() if isinstance(item, dict) and item.get("enabled") == False}) if isinstance(policies, dict) else sorted(set(disabled).intersection(TOOL_NAMES))
+            if "enabled_tools" in entry:
+                allowed = entry["enabled_tools"]
+                if not isinstance(allowed, list):
+                    conflicts.append("enabled_tools 结构未知，不能自动修复")
+                else:
+                    for name in required:
+                        if name not in allowed and name not in retained:
+                            allowed.append(name)
+                            additions.append(name)
+            if additions: changes.append({"target": "config.toml:mcp_servers.codexrelay.enabled_tools", "operation": "append", "tools": additions})
+            if cleared: changes.append({"target": "config.toml:mcp_servers.codexrelay", "operation": "remove_selected_denials", "tools": sorted(set(cleared))})
+        if enable_server and entry.get("enabled") == False:
+            entry["enabled"] = True
+            changes.append({"target": "config.toml:mcp_servers.codexrelay.enabled", "operation": "enable_server", "before": False, "after": True})
+    after_rules = before_rules
+    if update_rules:
+        rule_state = rules_status(before_rules)
+        if rule_state["state"] == "malformed":
+            conflicts.append(rule_state["reason"])
+        elif rule_state["state"] != "current":
+            text = strip_block(decode(before_rules), BEGIN, END)
+            after_rules = (text.rstrip() + "\n\n" + RULES + "\n").lstrip("\n").encode("utf-8")
+            changes.append({"target": "AGENTS.md:CodexRelay managed block", "operation": "replace_owned_rules", "before": rule_state["version"], "after": RULES_VERSION})
+    after_config = tomlkit.dumps(config).encode("utf-8") if update_registration else before_config
+    from .integration_evidence import sha256
+    plan = {"schema_version": 1, "codex_home": str(directory), "runtime_fingerprint": manifest()["fingerprint"],
+            "expected": {"config_sha256": sha256(before_config), "rules_sha256": sha256(before_rules), "config_exists": config_path.exists(), "rules_exists": rules_path.exists()},
+            "selection": {"capability_scope": capability_scope, "remove_denials": sorted(set(remove_denials)), "update_registration": update_registration, "update_rules": update_rules, "enable_server": enable_server},
+            "changes": changes, "added_tools": additions, "removed_denials": sorted(set(cleared)), "retained_denials": retained,
+            "conflicts": conflicts, "reconnect_required": bool(changes), "backup_protection": "Windows DPAPI current user",
+            "resulting_configuration": predict_tools(config.get("mcp_servers", {}).get("codexrelay"), store, directory)}
+    plan["plan_id"] = digest(plan)
+    return plan, (config_path, before_config, after_config), (rules_path, before_rules, after_rules)
+
+
+def repair_preview(store, codex_home=None, capability_scope="full", remove_denials=None,
+                   update_registration=True, update_rules=True, enable_server=False):
+    """Read-only concrete repair preview; no plan/cache/config files are created."""
+    return _repair_data(store, codex_home, capability_scope, remove_denials, update_registration, update_rules, enable_server)[0]
+
+
+def _operation_backup(store, directory, plan, files):
+    backup_dir = store.directory / "backups"
+    backup_dir.mkdir(exist_ok=True)
+    backup = backup_dir / (uuid.uuid4().hex + ".dpapi")
+    payload = {"schema_version": 1, "directory": str(directory), "plan_id": plan["plan_id"], "created_at": time.time(),
+               "files": [{"name": path.name, "existed": path.exists(), "before": base64.b64encode(before).decode(), "after": base64.b64encode(after).decode()} for path, before, after in files]}
+    backup.write_bytes(crypt(json.dumps(payload).encode()))
+    # Record the recoverable operation before any target is replaced.
+    store.set_setting("integration_recovery:" + str(directory), {"backup": str(backup), "plan_id": plan["plan_id"], "state": "applying"})
+    return backup
+
+
+def _restore_files(directory, payload, applied=None):
+    pending = []
+    for item in reversed(payload["files"]):
+        if applied is not None and item["name"] not in applied:
+            continue
+        path = directory / item["name"]
+        before, after = base64.b64decode(item["before"]), base64.b64decode(item["after"])
+        current = read(path)
+        if current == before and path.exists() == item["existed"]:
+            continue
+        if current != after:
+            pending.append({"file": str(path), "reason": "external_edit_preserved"})
+            continue
+        try:
+            replace_checked(path, after, before)
+            if not item["existed"] and read(path) == before:
+                path.unlink()
+        except (ValueError, OSError):
+            pending.append({"file": str(path), "reason": "rollback_write_failed"})
+    return pending
+
+
+def apply_plan(store, plan, codex_home=None):
+    if not isinstance(plan, dict) or plan.get("schema_version") != 1:
+        raise ValueError("invalid repair plan")
+    directory = codex_dir(codex_home or plan.get("codex_home"))
+    if str(directory) != plan.get("codex_home"):
+        raise ValueError("repair plan belongs to another Codex directory")
+    with lock(store):
+        if store.setting("integration_recovery:" + str(directory)):
+            raise ValueError("存在接入恢复事项，请先恢复或检查现有操作")
+        current, config_file, rules_file = _repair_data(store, directory, **plan["selection"])
+        if current["plan_id"] != plan.get("plan_id"):
+            raise ValueError("修复预览已失效：配置、规则、选项或运行时发生改变，请重新预览")
+        if current["conflicts"]:
+            raise ValueError("；".join(current["conflicts"]))
+        if any(task["status"] in {"queued", "running", "cancelling", "compacting", "wrapping_up"} for task in store.snapshot()["tasks"]):
+            raise ValueError("请先结束运行中的任务")
+        files = [item for item in (config_file, rules_file) if item[1] != item[2]]
+        if not files:
+            return {**status(store, directory), "restart_required": False, "message": "没有所选配置变更；仍需客户端验证"}
+        directory.mkdir(parents=True, exist_ok=True)
+        backup = _operation_backup(store, directory, current, files)
+        payload = json.loads(crypt(backup.read_bytes(), decrypt=True))
+        applied = []
+        try:
+            for path, before, after in files:
+                replace_checked(path, before, after)
+                applied.append(path.name)
+        except BaseException as exc:
+            pending = _restore_files(directory, payload, applied)
+            store.set_setting("integration_recovery:" + str(directory), {"backup": str(backup), "plan_id": current["plan_id"], "state": "needs_review" if pending else "rolled_back", "pending": pending})
+            raise ValueError("修复未完成；备份已保留。" + ("存在外部修改，需检查恢复事项。" if pending else "本次已写入部分已回退。") + " " + type(exc).__name__) from exc
+        store.set_setting("integration_recovery:" + str(directory), None)
+        store.set_setting("integration_repair_backup:" + str(directory), str(backup))
+        if current["selection"]["update_registration"]:
+            store.set_setting("integration_registration:" + str(directory), {"command": str(Path(sys.executable).resolve())})
+        return {**status(store, directory), "restart_required": True, "operation_backup": str(backup), "message": "配置已更新，等待客户端重新连接并重新验证"}
+
+
+def restore_repair(store, codex_home=None):
+    directory = codex_dir(codex_home)
+    with lock(store):
+        recovery = store.setting("integration_recovery:" + str(directory))
+        if not recovery:
+            return {"restored": True, "pending": []}
+        payload = json.loads(crypt(Path(recovery["backup"]).read_bytes(), decrypt=True))
+        if Path(payload["directory"]).resolve() != directory or payload["plan_id"] != recovery["plan_id"]:
+            raise ValueError("恢复备份归属不匹配")
+        if any(item.get("name") not in {"config.toml", "AGENTS.md"} for item in payload["files"]):
+            raise ValueError("恢复目标不属于本软件接入文件")
+        pending = _restore_files(directory, payload)
+        store.set_setting("integration_recovery:" + str(directory), {**recovery, "state": "needs_review", "pending": pending} if pending else None)
+        return {"restored": not pending, "pending": pending, "backup": recovery["backup"]}
+
+
+def status(store, codex_home=None, instance=None, workspace=None, client_session_id=None):
+    directory = codex_dir(codex_home)
+    try:
+        config = tomlkit.parse(decode(read(directory / "config.toml")))
+        parse_error = None
+    except (ValueError, UnicodeError, tomlkit.exceptions.ParseError):
+        config, parse_error = {}, "配置无法解析；保留原文件并先修复 TOML 语法"
     entry = config.get("mcp_servers", {}).get("codexrelay")
     old = config.get("mcp_servers", {}).get("deepseek")
+    prediction = predict_tools(entry, store, directory, parse_error)
+    rules = rules_status(read(directory / "AGENTS.md"))
+    from .integration_evidence import evidence_status, verification_instructions
+    evidence = evidence_status(store, directory, instance=instance, workspace=workspace, client_session_id=client_session_id)
+    ready_config = prediction["registration_state"] == "owned" and not prediction["unknown_policies"] and rules["state"] == "current"
+    limited = prediction["server_enabled"] is False or any(item["state"] == "limited" for item in prediction["capabilities"])
     return {"codex_home": str(directory), "config_exists": (directory / "config.toml").exists(),
             "registered": owned(entry, store, directory), "legacy_deepseek": bool(old),
-            "client_verification": "请在新的 Codex 聊天调用 codexrelay ping 核对工作区",
+            "state": "configuration_needs_repair" if not ready_config else "capabilities_limited" if limited else evidence["state"],
+            "delegation_enabled": bool(store.setting("enabled", False)),
+            "server_declaration": {"source": "server_declaration", **manifest()},
+            "configuration_prediction": {"source": "configuration_prediction", **prediction},
+            "managed_rules": rules, "client_evidence": evidence,
+            "verification_instructions": verification_instructions(directory),
+            "client_verification": "配置检查不证明当前聊天已加载；重新连接后导入客户端报告并核对实际调用。",
+            "pending_recovery": store.setting("integration_recovery:" + str(directory)),
             "backup": store.setting("integration_backup:" + str(directory))}
 
 
-def preview(store, codex_home=None):
+def preview(store, codex_home=None, capability_scope="full", remove_denials=None, update_registration=True, update_rules=True, enable_server=False):
     result = status(store, codex_home)
     directory = codex_dir(codex_home)
     config = tomlkit.parse(decode(read(directory / "config.toml")))
@@ -156,6 +415,7 @@ def preview(store, codex_home=None):
     elif result["legacy_deepseek"]:
         result["conflict"] = "检测到已有 DeepSeek 接入；请先结束旧任务，再选择迁移已有接入"
     result["changes"] = ["备份受影响文件（Windows 加密）", "注册本地 MCP 引擎", "追加有边界标记的委托规则"]
+    result["repair_plan"] = repair_preview(store, codex_home, capability_scope, remove_denials, update_registration, update_rules, enable_server)
     return result
 
 
@@ -224,7 +484,7 @@ def install(store, codex_home=None, migrate=False):
         table["tool_timeout_sec"] = 18060
         table["default_tools_approval_mode"] = "writes"
         policy = legacy or (previous_entry.unwrap() if previous_entry else {})
-        for key in ("default_tools_approval_mode", "enabled_tools", "disabled_tools", "tools", "startup_timeout_sec", "tool_timeout_sec"):
+        for key in ("default_tools_approval_mode", "enabled", "enabled_tools", "disabled_tools", "tools", "startup_timeout_sec", "tool_timeout_sec"):
             if key in policy:
                 table[key] = policy[key]
         servers["codexrelay"] = table
@@ -293,7 +553,12 @@ def uninstall(store, codex_home=None):
 
 
 def dispatch(store, method, params):
-    action = {"integration_status": status, "integration_preview": preview, "integration_install": install, "integration_refresh": install, "integration_uninstall": uninstall}.get(method)
+    from .integration_evidence import record_client_report, verification_instructions
+    action = {"integration_status": status, "integration_preview": preview, "integration_install": install,
+              "integration_refresh": install, "integration_uninstall": uninstall,
+              "integration_repair_preview": repair_preview, "integration_apply_plan": apply_plan,
+              "integration_restore_repair": restore_repair, "integration_client_report": record_client_report,
+              "integration_verification_instructions": lambda _store, **options: verification_instructions(**options)}.get(method)
     if not action:
         raise ValueError("未知接入操作")
     return action(store, **params)

@@ -55,3 +55,15 @@ After source changes synchronize Python and rebuild the Pi bridge if JavaScript 
 ## 0.3.1 release artifacts
 
 `tests/package_execution_patch.py` assembles the verified installer, complete source, evidence, dependency notices and SHA256 file. It needs the retained local 0.3.0 and 0.3.1 evidence; a fresh clone does not fabricate those records. Public assets are under the [v0.3.1 GitHub Release](https://github.com/Favio8/codexrelay/releases/tag/v0.3.1). Acceptance tables name paths inside the evidence ZIP, so all listed records can be inspected without the development machine's temporary directories. Paid-model experiment scripts require separate authorization and must not be invoked as routine release checks.
+
+## 0.4.0 release packaging
+
+Use `scripts/sync-engine.ps1` before subprocess/stdio/native checks: the bundled interpreter imports its installed workspace copy, not necessarily `engine/` or `vendor/`. Schema 5 is additive. The independent grader and original case JSON are bundled as package resources. Never replace a graded workspace's scorer or reuse a started trial identity.
+
+`tests/run_reliability_mcp.py` crosses real stdio, frozen trial/group/client identities, both execution backends, the per-request authorization boundary and fixed independent grading. `tests/run_desktop_ui.mjs` owns the isolated native fixture required by `desktop-ui.mjs` and refuses an unowned debugging port. Native fixtures must run serially because of the application's single-instance policy.
+
+After verification, `tests/package_reliability_delivery.py` packages the actual dirty workspace, including pre-existing user edits and new files, alongside the local NSIS installer, evidence and SHA256 checks. It requires an explicit verification receipt and validates ZIP member hashes. It does not commit, publish or install the app. See [the acceptance matrix](DELEGATION-ACCEPTANCE.md).
+
+Public releases use `tests/package_public_release.py` after committing: the source ZIP comes from the exact Git commit, while runtime build inputs are matched with explicit line-ending normalization. The public evidence ZIP excludes private host configuration and screenshots, replaces local paths, updates redacted-file hashes, and keeps the 19/7/1 coverage boundary. Local originals are preserved.
+
+Use `scripts/build.ps1 -Toolchain <toolchain> -Public -NoBundle` to remap native build paths. Before bundling, remove only verified workspace runtime bytecode caches, then run the native/upgrade checks appropriate to the changed artifact. Include generated license text and required dependency source archives. `release-manifest.json` records provenance and final asset hashes. Publishing a GitHub Release does not update the everyday installation.

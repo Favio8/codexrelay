@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "license": "Original CodexRelay synthetic fixtures; repository license applies.",
+  "cases": [
+    {
+      "id": "implementation-clamp-v1",
+      "kind": "implementation",
+      "difficulty": "pilot-small",
+      "task": "Fix clamp.py: clamp(value, lower, upper) must return the nearest inclusive bound or the original value; lower > upper must raise ValueError. Preserve the function signature. Only modify clamp.py. Run independent boundary checks. Do not edit frozen evaluators or create unrelated files.",
+      "write_paths": ["clamp.py"],
+      "initial_files": {"clamp.py": "def clamp(value, lower, upper):\n    return max(lower, value)\n"}
+    },
+    {
+      "id": "testing-inclusive-v1",
+      "kind": "testing",
+      "difficulty": "pilot-small",
+      "task": "Run existing unittest tests without editing any workspace file. Explain the actual failure. Retain the final answer as JSON outside this readonly source tree with keys exit_code, failing_test, cause, source, fix. Use stable cause=exclusive_upper_bound, source=clamp.py:2, fix=include_upper_bound when justified by evidence.",
+      "write_paths": [],
+      "initial_files": {
+        "clamp.py": "def within(value, lower, upper):\n    return lower <= value < upper\n",
+        "tests/test_bounds.py": "import unittest\nfrom pathlib import Path\nimport runpy\nwithin = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'clamp.py'))['within']\nclass Bounds(unittest.TestCase):\n    def test_lower_bound(self):\n        self.assertTrue(within(0, 0, 3))\n    def test_upper_bound(self):\n        self.assertTrue(within(3, 0, 3))\n"
+      }
+    },
+    {
+      "id": "review-auth-v1",
+      "kind": "review",
+      "difficulty": "pilot-small",
+      "task": "Review auth.py and utils.py without writing. Identify demonstrable security defects and avoid false positives. Retain final answer JSON outside this tree as findings:[{path,line,issue,impact}], normal_files:[path]. Stable issue vocabulary: empty_token_authorized; impact: unauthenticated_access.",
+      "write_paths": [],
+      "initial_files": {
+        "auth.py": "def authorized(token, expected):\n    return not token or token == expected\n",
+        "utils.py": "def display_name(value):\n    return value.strip() or 'Anonymous'\n"
+      }
+    },
+    {
+      "id": "analysis-timeouts-v1",
+      "kind": "analysis",
+      "difficulty": "pilot-small",
+      "task": "Read fixed settings and request logs without modifying them. Answer counts, timeout ID and exact source line, configured timeout and its source, median latency, and whether root cause is known. Retain final JSON outside this tree using keys requests, completed, timeouts, timeout_request, timeout_source, configured_timeout_seconds, configuration_source, root_cause, latency_p50_ms. No conjecture as fact.",
+      "write_paths": [],
+      "initial_files": {
+        "settings.json": "{\"timeout_seconds\":12}\n",
+        "logs/requests.jsonl": "{\"request\":\"r1\",\"status\":\"completed\",\"latency_ms\":40}\n{\"request\":\"r2\",\"status\":\"timeout\",\"latency_ms\":12000}\n{\"request\":\"r3\",\"status\":\"completed\",\"latency_ms\":20}\n"
+      }
+    },
+    {
+      "id": "documentation-runbook-v1",
+      "kind": "documentation",
+      "difficulty": "pilot-small",
+      "task": "Create only RUNBOOK.md using release.txt and operations.txt. Explain the test command, 12 seconds timeout, explicit cancellation leaving partial changes, API key storage, and name both sources. Do not promise automatic rollback or savings. Keep input files unchanged.",
+      "write_paths": ["RUNBOOK.md"],
+      "initial_files": {
+        "release.txt": "Tests: python -m unittest discover -s tests\nConnection timeout: 12 seconds\nAPI key: stored in Windows Credential Manager\n",
+        "operations.txt": "Stopping requires explicit cancellation. Stopping preserves partial changes for independent review. No rollback or savings guarantee is provided.\n"
+      }
+    }
+  ]
+}

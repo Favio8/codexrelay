@@ -1,0 +1,320 @@
+{
+  "schema_version": 1,
+  "target": "x86_64-pc-windows-msvc",
+  "review_basis": "Cargo.lock checksums, registry .cargo_vcs_info.json, commit-pinned upstream license files; normal dependency closure excludes proc-macro packages for runtime classification",
+  "components": [
+    {
+      "name": "alloc-stdlib",
+      "version": "0.3.0",
+      "license": "BSD-3-Clause",
+      "crate_checksum": "0b5c1865780388bfa186411ab5f247819487fc4864c6e9c3106611fa347586e1",
+      "upstream_repository": "https://github.com/dropbox/rust-alloc-no-stdlib",
+      "upstream_commit": "0a81fd6928ea3b33c8cd484aa4575d50ffb98012",
+      "upstream_path": "alloc-stdlib",
+      "classification": "runtime",
+      "documents": [
+        "alloc-stdlib-0.3.0/LICENSE"
+      ],
+      "authors": [
+        "Daniel Reiter Horn <danielrh@dropbox.com>"
+      ]
+    },
+    {
+      "name": "defmt-parser",
+      "version": "1.0.0",
+      "license": "MIT OR Apache-2.0",
+      "crate_checksum": "10d60334b3b2e7c9d91ef8150abfb6fa4c1c39ebbcf4a81c2e346aad939fee3e",
+      "upstream_repository": "https://github.com/knurling-rs/defmt",
+      "upstream_commit": "4a8cdb44891ed57b8ff5a023b6bec7137c48708f",
+      "upstream_path": "parser",
+      "classification": "build_time_or_proc_macro",
+      "documents": [
+        "defmt-parser-1.0.0/LICENSE-MIT",
+        "defmt-parser-1.0.0/LICENSE-APACHE"
+      ],
+      "authors": [
+        "The Knurling-rs developers"
+      ]
+    },
+    {
+      "name": "selectors",
+      "version": "0.38.0",
+      "license": "MPL-2.0",
+      "crate_checksum": "8adfa1c298912827b8a28b223b3b874357397ae706e6190acd9bf28cee99114d",
+      "upstream_repository": "https://github.com/servo/stylo",
+      "upstream_commit": "572ecba2d1600e7c3d490586692a209faf703baa",
+      "upstream_path": "selectors",
+      "classification": "runtime",
+      "documents": [
+        "MPL-2.0.txt",
+        "selectors-0.38.0/source-notice.txt"
+      ],
+      "authors": [
+        "The Servo Project Developers"
+      ]
+    },
+    {
+      "name": "tauri-plugin",
+      "version": "2.7.1",
+      "license": "Apache-2.0 OR MIT",
+      "crate_checksum": "1140cf34a3b3b836a13103dcab17f18831d5cc3534cbd435dc01a5c6daa65aa2",
+      "upstream_repository": "https://github.com/tauri-apps/tauri",
+      "upstream_commit": "30da1fd6e17de6107ecc850c95dfb16b5729f2dd",
+      "upstream_path": "crates/tauri-plugin",
+      "classification": "build_time_or_proc_macro",
+      "documents": [
+        "tauri-plugin-2.7.1/LICENSE-MIT",
+        "tauri-plugin-2.7.1/LICENSE-APACHE-2.0"
+      ],
+      "authors": [
+        "Tauri Programme within The Commons Conservancy"
+      ]
+    },
+    {
+      "name": "webview2-com",
+      "version": "0.39.1",
+      "license": "MIT",
+      "crate_checksum": "3f89fca7a704cee10dcb3654c1dbb8941d1783132f1917358af75bec37a7d7e6",
+      "upstream_repository": "https://github.com/wravery/webview2-rs",
+      "upstream_commit": "edc2caf886175ccaebe86078c9cfe1ae2a187328",
+      "upstream_path": "crates/webview2-com",
+      "classification": "runtime",
+      "documents": [
+        "webview2-rs-edc2caf/LICENSE"
+      ],
+      "authors": []
+    },
+    {
+      "name": "webview2-com-macros",
+      "version": "0.8.1",
+      "license": "MIT",
+      "crate_checksum": "67a921c1b6914c367b2b823cd4cde6f96beec77d30a939c8199bb377cf9b9b54",
+      "upstream_repository": "https://github.com/wravery/webview2-rs",
+      "upstream_commit": "dffa41a8a46d3f5565eefbff2de57d38d399f158",
+      "upstream_path": "crates/callback-macros",
+      "classification": "build_time_or_proc_macro",
+      "documents": [
+        "webview2-rs-dffa41a/LICENSE"
+      ],
+      "authors": []
+    },
+    {
+      "name": "webview2-com-sys",
+      "version": "0.39.1",
+      "license": "MIT",
+      "crate_checksum": "b3a07132775117d6065853d9d1178157b8c90e228de47129d6bce2c7edebedfb",
+      "upstream_repository": "https://github.com/wravery/webview2-rs",
+      "upstream_commit": "edc2caf886175ccaebe86078c9cfe1ae2a187328",
+      "upstream_path": "crates/bindings",
+      "classification": "runtime",
+      "documents": [
+        "webview2-rs-edc2caf/LICENSE"
+      ],
+      "authors": []
+    },
+    {
+      "name": "@tauri-apps/plugin-dialog",
+      "version": "2.8.2",
+      "license": "MIT OR Apache-2.0",
+      "package_manager": "npm",
+      "npm_integrity": "sha512-LFqp8OTx0bHOwhKRhMMDyRDlo/2IO5XxoOclpf8+yvjAfM2ytVdbB6tk63dBlicsR8pRw38maj/GxrU6cW8mXw==",
+      "tarball_sha256": "0385b39a04d291464e83cbdef42007252c392fa9158a0efc101de6f47978de1d",
+      "tarball_url": "https://registry.npmjs.org/@tauri-apps/plugin-dialog/-/plugin-dialog-2.8.2.tgz",
+      "upstream_repository": "https://github.com/tauri-apps/plugins-workspace",
+      "upstream_commit": "6bbd44d4ef254d835a12c6d7bdf2a8a61778031a",
+      "upstream_path": "plugins/dialog",
+      "classification": "frontend_runtime",
+      "documents": [
+        "tauri-plugin-dialog-npm-2.8.2/LICENSE_MIT",
+        "tauri-plugin-dialog-npm-2.8.2/LICENSE_APACHE-2.0",
+        "tauri-plugin-dialog-npm-2.8.2/LICENSE.spdx"
+      ],
+      "authors": [
+        "Tauri Programme within The Commons Conservancy"
+      ]
+    }
+  ],
+  "documents": {
+    "alloc-stdlib-0.3.0/LICENSE": {
+      "path": "alloc-stdlib-0.3.0/LICENSE",
+      "source_url": "https://raw.githubusercontent.com/dropbox/rust-alloc-no-stdlib/0a81fd6928ea3b33c8cd484aa4575d50ffb98012/LICENSE",
+      "sha256": "c0c56f26d9c051cac4d200c34c84e7ae9aaa853e01a982a1df08b09931e518ae",
+      "bytes": 1483,
+      "download_sha256": "c0c56f26d9c051cac4d200c34c84e7ae9aaa853e01a982a1df08b09931e518ae",
+      "normalization": "UTF-8 license text; CRLF normalized to LF only"
+    },
+    "defmt-parser-1.0.0/LICENSE-MIT": {
+      "path": "defmt-parser-1.0.0/LICENSE-MIT",
+      "source_url": "https://raw.githubusercontent.com/knurling-rs/defmt/4a8cdb44891ed57b8ff5a023b6bec7137c48708f/LICENSE-MIT",
+      "sha256": "2710a622a896bba67356913d4d0492cab5465f61b2ecce6d880aeb483834fb50",
+      "bytes": 1053,
+      "download_sha256": "2710a622a896bba67356913d4d0492cab5465f61b2ecce6d880aeb483834fb50",
+      "normalization": "UTF-8 license text; CRLF normalized to LF only"
+    },
+    "defmt-parser-1.0.0/LICENSE-APACHE": {
+      "path": "defmt-parser-1.0.0/LICENSE-APACHE",
+      "source_url": "https://raw.githubusercontent.com/knurling-rs/defmt/4a8cdb44891ed57b8ff5a023b6bec7137c48708f/LICENSE-APACHE",
+      "sha256": "8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90",
+      "bytes": 10850,
+      "download_sha256": "8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90",
+      "normalization": "UTF-8 license text; CRLF normalized to LF only"
+    },
+    "MPL-2.0.txt": {
+      "path": "MPL-2.0.txt",
+      "source_url": "https://www.mozilla.org/media/MPL/2.0/index.815ca599c9df.txt",
+      "sha256": "fab3dd6bdab226f1c08630b1dd917e11fcb4ec5e1e020e2c16f83a0a13863e85",
+      "bytes": 16726,
+      "download_sha256": "fab3dd6bdab226f1c08630b1dd917e11fcb4ec5e1e020e2c16f83a0a13863e85",
+      "normalization": "UTF-8 license text; CRLF normalized to LF only"
+    },
+    "selectors-0.38.0/source-notice.txt": {
+      "path": "selectors-0.38.0/source-notice.txt",
+      "source_url": "https://raw.githubusercontent.com/servo/stylo/572ecba2d1600e7c3d490586692a209faf703baa/selectors/lib.rs",
+      "sha256": "d54c6e13e9e952dac17d209171df8657e3cae93beaddace4906150cdec8d02e9",
+      "bytes": 643,
+      "download_sha256": "d54c6e13e9e952dac17d209171df8657e3cae93beaddace4906150cdec8d02e9",
+      "normalization": "UTF-8 license text; CRLF normalized to LF only"
+    },
+    "tauri-plugin-2.7.1/LICENSE-MIT": {
+      "path": "tauri-plugin-2.7.1/LICENSE-MIT",
+      "source_url": "https://raw.githubusercontent.com/tauri-apps/tauri/30da1fd6e17de6107ecc850c95dfb16b5729f2dd/LICENSE-MIT",
+      "sha256": "9dd42ea92cff2ede5cd477cbfcce051b2d0115c0ac7f368ee88cb545055dff1d",
+      "bytes": 1090,
+      "download_sha256": "9dd42ea92cff2ede5cd477cbfcce051b2d0115c0ac7f368ee88cb545055dff1d",
+      "normalization": "UTF-8 license text; CRLF normalized to LF only"
+    },
+    "tauri-plugin-2.7.1/LICENSE-APACHE-2.0": {
+      "path": "tauri-plugin-2.7.1/LICENSE-APACHE-2.0",
+      "source_url": "https://raw.githubusercontent.com/tauri-apps/tauri/30da1fd6e17de6107ecc850c95dfb16b5729f2dd/LICENSE-APACHE-2.0",
+      "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
+      "bytes": 10174,
+      "download_sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
+      "normalization": "UTF-8 license text; CRLF normalized to LF only"
+    },
+    "webview2-rs-edc2caf/LICENSE": {
+      "path": "webview2-rs-edc2caf/LICENSE",
+      "source_url": "https://raw.githubusercontent.com/wravery/webview2-rs/edc2caf886175ccaebe86078c9cfe1ae2a187328/LICENSE",
+      "sha256": "0dcf41516e608bbcb6cdc5229feb7b86fe4a643b85e7df251133c93408fdac73",
+      "bytes": 1067,
+      "download_sha256": "0dcf41516e608bbcb6cdc5229feb7b86fe4a643b85e7df251133c93408fdac73",
+      "normalization": "UTF-8 license text; CRLF normalized to LF only"
+    },
+    "webview2-rs-dffa41a/LICENSE": {
+      "path": "webview2-rs-dffa41a/LICENSE",
+      "source_url": "https://raw.githubusercontent.com/wravery/webview2-rs/dffa41a8a46d3f5565eefbff2de57d38d399f158/LICENSE",
+      "sha256": "0dcf41516e608bbcb6cdc5229feb7b86fe4a643b85e7df251133c93408fdac73",
+      "bytes": 1067,
+      "download_sha256": "0dcf41516e608bbcb6cdc5229feb7b86fe4a643b85e7df251133c93408fdac73",
+      "normalization": "UTF-8 license text; CRLF normalized to LF only"
+    },
+    "Microsoft.Web.WebView2-1.0.3800.47/LICENSE.txt": {
+      "path": "Microsoft.Web.WebView2-1.0.3800.47/LICENSE.txt",
+      "source_url": "https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/1.0.3800.47/microsoft.web.webview2.1.0.3800.47.nupkg",
+      "archive_member": "LICENSE.txt",
+      "archive_sha256": "56c9f26bdd07916a2d1949fb58a5c7e434dfa1173577dca879206050c4e718db",
+      "sha256": "0af8f1b807512aae39c2ac1aa4d0cae65cabecb6fd554b8439a5162a0d6eca55",
+      "bytes": 1487,
+      "download_sha256": "0af8f1b807512aae39c2ac1aa4d0cae65cabecb6fd554b8439a5162a0d6eca55",
+      "normalization": "UTF-8 license text; CRLF normalized to LF only"
+    },
+    "Microsoft.Web.WebView2-1.0.3800.47/NOTICE.txt": {
+      "path": "Microsoft.Web.WebView2-1.0.3800.47/NOTICE.txt",
+      "source_url": "https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/1.0.3800.47/microsoft.web.webview2.1.0.3800.47.nupkg",
+      "archive_member": "NOTICE.txt",
+      "archive_sha256": "56c9f26bdd07916a2d1949fb58a5c7e434dfa1173577dca879206050c4e718db",
+      "sha256": "106423785c5b7eba0a8e61d1837f2132e9c828e20ad530f565d981c1df60dd90",
+      "bytes": 3894,
+      "download_sha256": "106423785c5b7eba0a8e61d1837f2132e9c828e20ad530f565d981c1df60dd90",
+      "normalization": "UTF-8 license text; CRLF normalized to LF only"
+    },
+    "tauri-plugin-dialog-npm-2.8.2/LICENSE_MIT": {
+      "path": "tauri-plugin-dialog-npm-2.8.2/LICENSE_MIT",
+      "source_url": "https://raw.githubusercontent.com/tauri-apps/plugins-workspace/6bbd44d4ef254d835a12c6d7bdf2a8a61778031a/plugins/dialog/LICENSE_MIT",
+      "download_sha256": "89ff9689dcf9dd53968785d05a26f7898bb169dbfcada8d032b3e68cf0d55607",
+      "sha256": "89ff9689dcf9dd53968785d05a26f7898bb169dbfcada8d032b3e68cf0d55607",
+      "bytes": 1089,
+      "normalization": "UTF-8 license text; CRLF normalized to LF only"
+    },
+    "tauri-plugin-dialog-npm-2.8.2/LICENSE_APACHE-2.0": {
+      "path": "tauri-plugin-dialog-npm-2.8.2/LICENSE_APACHE-2.0",
+      "source_url": "https://raw.githubusercontent.com/tauri-apps/plugins-workspace/6bbd44d4ef254d835a12c6d7bdf2a8a61778031a/plugins/dialog/LICENSE_APACHE-2.0",
+      "download_sha256": "0cec06e0e55fbc3dc5cee4fca9b607f66cb8f4e4dbcf3b3c013594dd156732e9",
+      "sha256": "0cec06e0e55fbc3dc5cee4fca9b607f66cb8f4e4dbcf3b3c013594dd156732e9",
+      "bytes": 10173,
+      "normalization": "UTF-8 license text; CRLF normalized to LF only"
+    },
+    "tauri-plugin-dialog-npm-2.8.2/LICENSE.spdx": {
+      "path": "tauri-plugin-dialog-npm-2.8.2/LICENSE.spdx",
+      "source_url": "https://raw.githubusercontent.com/tauri-apps/plugins-workspace/6bbd44d4ef254d835a12c6d7bdf2a8a61778031a/plugins/dialog/LICENSE.spdx",
+      "download_sha256": "eb8a6c84630461b352badcab1dbe5d0168c56d377358b2b8c86b51003272d5ef",
+      "sha256": "eb8a6c84630461b352badcab1dbe5d0168c56d377358b2b8c86b51003272d5ef",
+      "bytes": 888,
+      "normalization": "UTF-8 license text; CRLF normalized to LF only"
+    }
+  },
+  "source_archives": [
+    {
+      "name": "cssparser",
+      "version": "0.37.0",
+      "license": "MPL-2.0",
+      "path": "source-archives/cssparser-0.37.0.crate",
+      "sha256": "8c9cdaae01d5ed7882b04d795e7f752f46ff52d2fa3b50a20d28c464510bba98",
+      "source_url": "https://static.crates.io/crates/cssparser/cssparser-0.37.0.crate",
+      "unmodified": true
+    },
+    {
+      "name": "cssparser-macros",
+      "version": "0.7.1",
+      "license": "MPL-2.0",
+      "path": "source-archives/cssparser-macros-0.7.1.crate",
+      "sha256": "d045de693cb712d0b22c6a64be5b953f67b3ce00ab5ad3dd5d8b441886ab8e1a",
+      "source_url": "https://static.crates.io/crates/cssparser-macros/cssparser-macros-0.7.1.crate",
+      "unmodified": true
+    },
+    {
+      "name": "dtoa-short",
+      "version": "0.3.5",
+      "license": "MPL-2.0",
+      "path": "source-archives/dtoa-short-0.3.5.crate",
+      "sha256": "cd1511a7b6a56299bd043a9c167a6d2bfb37bf84a6dfceaba651168adfb43c87",
+      "source_url": "https://static.crates.io/crates/dtoa-short/dtoa-short-0.3.5.crate",
+      "unmodified": true
+    },
+    {
+      "name": "option-ext",
+      "version": "0.2.0",
+      "license": "MPL-2.0",
+      "path": "source-archives/option-ext-0.2.0.crate",
+      "sha256": "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d",
+      "source_url": "https://static.crates.io/crates/option-ext/option-ext-0.2.0.crate",
+      "unmodified": true
+    },
+    {
+      "name": "selectors",
+      "version": "0.38.0",
+      "license": "MPL-2.0",
+      "path": "source-archives/selectors-0.38.0.crate",
+      "sha256": "8adfa1c298912827b8a28b223b3b874357397ae706e6190acd9bf28cee99114d",
+      "source_url": "https://static.crates.io/crates/selectors/selectors-0.38.0.crate",
+      "unmodified": true
+    }
+  ],
+  "embedded_components": [
+    {
+      "name": "Microsoft.Web.WebView2 SDK loader",
+      "version": "1.0.3800.47",
+      "owner_crate": "webview2-com-sys",
+      "owner_version": "0.39.1",
+      "documents": [
+        "Microsoft.Web.WebView2-1.0.3800.47/LICENSE.txt",
+        "Microsoft.Web.WebView2-1.0.3800.47/NOTICE.txt"
+      ],
+      "sdk_source_url": "https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/1.0.3800.47/microsoft.web.webview2.1.0.3800.47.nupkg",
+      "sdk_sha256": "56c9f26bdd07916a2d1949fb58a5c7e434dfa1173577dca879206050c4e718db",
+      "shipping_member": "build/native/x64/WebView2LoaderStatic.lib",
+      "shipping_member_sha256": "89c6b872783b8f6c3cedbff618adb42082d455c615453ae10cfc753f1e8f25d8",
+      "verified_matches_crate": true,
+      "version_evidence": "https://github.com/wravery/webview2-rs/blob/edc2caf886175ccaebe86078c9cfe1ae2a187328/crates/update-bindings/src/main.rs"
+    }
+  ]
+}

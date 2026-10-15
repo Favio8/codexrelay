@@ -182,7 +182,8 @@ def checkpoint(db, task):
             except OSError: files[os.path.normcase(str(path.resolve()))] = 'unreadable'
     body = dict(schema_version=1, group_id=group['group_id'], run_id=task['id'], checkpoint_id=identifier,
                 sequence=sequence, created_at=time.time(), fixed_contract=group['task_contract'],
-                environment={k: task.get(k) for k in ('backend_id', 'backend_version', 'provider_revision', 'model', 'context_window')},
+                environment={k: task.get(k) for k in ('backend_id', 'backend_version', 'provider_revision', 'model', 'context_window',
+                             'mcp_instance', 'client_binding_id', 'experiment_id', 'trial_id')},
                 progress=progress, files=files, mutations=telemetry.get('mutations'), workspace_changes=telemetry.get('workspace_changes'),
                 workspace_review=telemetry.get('workspace_review'), tests=telemetry.get('bash'),
                 active_tool=telemetry.get('active_tool'),
